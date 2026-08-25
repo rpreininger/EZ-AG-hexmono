@@ -1,0 +1,133 @@
+// Übernommen aus ESP32_Host_MIDI 7.2.0 von Saulo Veríssimo (MIT, siehe
+// USBConnection.LICENSE) — https://github.com/sauloverissimo/ESP32_Host_MIDI
+//
+// Nur der USB-Host-Transport, ohne BLE, RTP-MIDI, OSC, Ethernet und ESP-NOW aus der
+// Bibliothek: diese drei Dateien hängen an nichts weiter als usb/usb_host.h.
+//
+// Lokale Änderung gegenüber dem Original: `sendMidiMessage` reiht Pakete ein, statt sie
+// zu verwerfen, solange ein OUT-Transfer läuft. Suche nach TX_QUEUE_SIZE.
+//
+#ifndef USB_CONNECTION_H
+#define USB_CONNECTION_H
+
+#include <Arduino.h>
+
+// USB Host requires USB-OTG hardware (S2 / S3 / P4). On chips without it
+// (ESP32 classic, C3, C6, H2) this header collapses to nothing, so the Arduino
+// IDE can still build the library's non-USB sources for those targets.
+#if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || \
+    defined(CONFIG_IDF_TARGET_ESP32P4)
+#define ESP32_HOST_MIDI_USB_AVAILABLE 1
+#else
+#define ESP32_HOST_MIDI_USB_AVAILABLE 0
+#endif
+
+#if ESP32_HOST_MIDI_USB_AVAILABLE
+
+#include <vector>
+#include <usb/usb_host.h>
+#include <freertos/portmacro.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include "MIDITransport.h"
+
+// Structure to store a raw USB packet.
+// Although transfers can be up to 64 bytes, only the first 4 are relevant per USB-MIDI event.
+struct RawUsbMessage {
+    uint8_t data[64];
+    size_t length;
+};
+
+class USBConnection : public MIDITransport {
+public:
+    USBConnection();
+
+    // Initializes the USB Host, registers the client, and starts the USB task on core 0.
+    bool begin();
+
+    // Drains the ring buffer and dispatches MIDI data via MIDITransport callbacks. Call from loop().
+    void task() override;
+
+    // Returns whether the USB connection is ready.
+    bool isConnected() const override { return isReady; }
+    const char* name() const override { return "USB Host"; }
+
+    // Sends a MIDI message to the connected USB device.
+    bool sendMidiMessage(const uint8_t* data, size_t length) override;
+
+    // Returns the last error message (empty if none).
+    const String& getLastError() const { return lastError; }
+
+    // Queue access methods (for debugging or external analysis)
+    int getQueueSize() const;
+    const RawUsbMessage& getQueueMessage(int index) const;
+
+protected:
+    bool isReady;
+    uint8_t interval;         // Polling interval (ms)
+    unsigned long lastCheck;
+
+    usb_host_client_handle_t clientHandle;
+    usb_device_handle_t deviceHandle;
+    uint32_t eventFlags;
+    usb_transfer_t* midiTransfer;     // IN transfer (receive)
+    usb_transfer_t* _outTransfer;     // OUT transfer (send)
+    volatile bool _outTransferBusy;   // True while an OUT transfer is pending
+
+    // Ring buffer for raw USB packets.
+    // Protected by spinlock for thread-safe access on dual-core ESP32.
+    static const int QUEUE_SIZE = 64;
+    RawUsbMessage usbQueue[QUEUE_SIZE];
+    volatile int queueHead;
+    volatile int queueTail;
+    portMUX_TYPE queueMux;
+
+    // Connection control data
+    bool firstMidiReceived;
+    bool isMidiDeviceConfirmed;
+    String deviceName;
+    String lastError;
+
+    // Helper functions to manage the queue.
+    bool enqueueMidiMessage(const uint8_t* data, size_t length);
+    bool dequeueMidiMessage(RawUsbMessage &msg);
+    void processQueue();
+
+    // ÄNDERUNG GEGENÜBER DEM ORIGINAL — Sendewarteschlange.
+    //
+    // Das Original hielt genau einen OUT-Transfer vor und verwarf jede Nachricht, solange
+    // dieser noch lief. Für den Filter ist das tödlich: bei Legato geht das Note On der
+    // neuen Note unmittelbar vor dem Note Off der alten hinaus, beide landen im selben
+    // 1-ms-Frame — die zweite Nachricht wäre verloren und die SidStation hinge in einer
+    // Note. Statt zu verwerfen wird jetzt eingereiht und aus dem Abschluss-Callback
+    // nachgeschoben.
+    static const int TX_QUEUE_SIZE = 32;
+    uint8_t txQueue[TX_QUEUE_SIZE][4];
+    volatile int txHead;
+    volatile int txTail;
+    portMUX_TYPE txMux;
+
+    /// Hängt ein 4-Byte-Paket an. false, wenn die Warteschlange voll ist.
+    bool _pushTx(const uint8_t packet[4]);
+    /// Schiebt das nächste Paket los, falls gerade kein Transfer läuft.
+    void _pumpTx();
+
+    // SysEx reassembly state
+    bool _sysexActive = false;
+    std::vector<uint8_t> _sysexBuf;
+
+    // Dedicated FreeRTOS task for USB event handling (core 0)
+    TaskHandle_t usbTaskHandle;
+    static void _usbTask(void* arg);
+
+    // Internal USB Host callbacks.
+    static void _clientEventCallback(const usb_host_client_event_msg_t *eventMsg, void *arg);
+    static void _onReceive(usb_transfer_t *transfer);
+    static void _onSendComplete(usb_transfer_t *transfer);
+    virtual void _processConfig(const usb_config_desc_t *config_desc);
+    virtual void _onDeviceGone() {}  // Override to free extra resources on disconnect.
+};
+
+#endif // ESP32_HOST_MIDI_USB_AVAILABLE
+
+#endif // USB_CONNECTION_H

@@ -1,0 +1,48 @@
+name: MidiFilter
+
+options:
+  bundleIdPrefix: de.ralfpreininger
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "17.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  MidiFilterCore:
+    path: Packages/MidiFilterCore
+
+targets:
+  MidiFilter:
+    type: application
+    supportedDestinations: [macOS, iOS]
+    sources:
+      - path: Sources
+    dependencies:
+      - package: MidiFilterCore
+        product: MidiFilterCore
+    settings:
+      base:
+        PRODUCT_NAME: MidiFilter
+        PRODUCT_BUNDLE_IDENTIFIER: de.ralfpreininger.MidiFilter
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: MidiFilter
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.music
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        # Keeps MIDI flowing when the iOS app is in the background.
+        INFOPLIST_KEY_UIBackgroundModes: audio
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+      configs:
+        Debug:
+          CODE_SIGN_IDENTITY: "-"
+        Release:
+          CODE_SIGN_IDENTITY: "-"

@@ -1,0 +1,472 @@
+// Übernommen aus ESP32_Host_MIDI 7.2.0 von Saulo Veríssimo (MIT, siehe
+// USBConnection.LICENSE) — https://github.com/sauloverissimo/ESP32_Host_MIDI
+//
+// Nur der USB-Host-Transport, ohne BLE, RTP-MIDI, OSC, Ethernet und ESP-NOW aus der
+// Bibliothek: diese drei Dateien hängen an nichts weiter als usb/usb_host.h.
+//
+// Lokale Änderung gegenüber dem Original: `sendMidiMessage` reiht Pakete ein, statt sie
+// zu verwerfen, solange ein OUT-Transfer läuft. Suche nach TX_QUEUE_SIZE.
+//
+#include "USBConnection.h"
+
+#if ESP32_HOST_MIDI_USB_AVAILABLE
+
+#include <string.h>
+
+// Enumeration filter, required from arduino-esp32 3.3.11 (ESP-IDF v5.5.5) on.
+//
+// That release enables CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK in the
+// prebuilt libraries. With the feature compiled in, leaving
+// usb_host_config_t::enum_filter_cb at NULL stalls enumeration: the client
+// never receives USB_HOST_CLIENT_EVENT_NEW_DEV, so no device is ever mounted.
+// Accepting every device keeps the behaviour of earlier cores.
+// Ref espressif/arduino-esp32#12778 and espressif/arduino-esp32#12783.
+//
+// Both the callback and its assignment sit behind the feature macro. The field
+// is honoured only when the feature is compiled in, and cores whose ESP-IDF
+// predates the field never define the macro, so older cores keep building.
+#ifdef CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
+static bool acceptAnyDevice(const usb_device_desc_t* devDesc, uint8_t* bConfigurationValue) {
+    (void)devDesc;
+    (void)bConfigurationValue;  // Keep the configuration value picked by the stack.
+    return true;
+}
+#endif
+
+static bool isValidMidiMessage(const uint8_t* midiData, size_t length) {
+    if (length < 2) return false;
+    if ((midiData[0] & 0x80) == 0) return false;
+    uint8_t status = midiData[0] & 0xF0;
+    if (status == 0xC0 || status == 0xD0)
+        return (length >= 2);
+    else
+        return (length >= 3);
+}
+
+USBConnection::USBConnection()
+  : isReady(false),
+    interval(0),
+    lastCheck(0),
+    clientHandle(nullptr),
+    deviceHandle(nullptr),
+    eventFlags(0),
+    midiTransfer(nullptr),
+    _outTransfer(nullptr),
+    _outTransferBusy(false),
+    queueHead(0),
+    queueTail(0),
+    queueMux(portMUX_INITIALIZER_UNLOCKED),
+    txQueue{},
+    txHead(0),
+    txTail(0),
+    txMux(portMUX_INITIALIZER_UNLOCKED),
+    firstMidiReceived(false),
+    isMidiDeviceConfirmed(false),
+    deviceName(""),
+    lastError(""),
+    usbTaskHandle(nullptr)
+{
+}
+
+bool USBConnection::begin() {
+    usb_host_config_t config = {};
+    config.skip_phy_setup = false;
+    config.intr_flags = ESP_INTR_FLAG_LEVEL1;
+#ifdef CONFIG_USB_HOST_ENABLE_ENUM_FILTER_CALLBACK
+    config.enum_filter_cb = acceptAnyDevice;
+#endif
+    esp_err_t err = usb_host_install(&config);
+    if (err != ESP_OK) {
+        lastError = "USB host install failed (err=" + String(err) + ")";
+        return false;
+    }
+
+    usb_host_client_config_t client_config = {
+        .is_synchronous = true,
+        .max_num_event_msg = 10,
+        .async = {
+            .client_event_callback = _clientEventCallback,
+            .callback_arg = this,
+        }
+    };
+    err = usb_host_client_register(&client_config, &clientHandle);
+    if (err != ESP_OK) {
+        lastError = "USB client register failed (err=" + String(err) + ")";
+        return false;
+    }
+
+    // Creates dedicated task on core 0 for continuous USB polling.
+    // Ensures MIDI events are never lost due to delays in the main loop.
+    xTaskCreatePinnedToCore(_usbTask, "usb_midi", 4096, this, 5, &usbTaskHandle, 0);
+
+    lastError = "";
+    return true;
+}
+
+void USBConnection::task() {
+    // USB polling runs on the dedicated task (_usbTask on core 0).
+    // Here we only drain the queue and dispatch via MIDITransport callbacks.
+    processQueue();
+}
+
+bool USBConnection::enqueueMidiMessage(const uint8_t* data, size_t /*length*/) {
+    portENTER_CRITICAL(&queueMux);
+    int next = (queueHead + 1) % QUEUE_SIZE;
+    if (next == queueTail) {
+        // Queue full; discard the message.
+        portEXIT_CRITICAL(&queueMux);
+        return false;
+    }
+    size_t copyLength = 4;
+    memcpy(usbQueue[queueHead].data, data, copyLength);
+    usbQueue[queueHead].length = copyLength;
+    queueHead = next;
+    portEXIT_CRITICAL(&queueMux);
+    return true;
+}
+
+bool USBConnection::dequeueMidiMessage(RawUsbMessage &msg) {
+    portENTER_CRITICAL(&queueMux);
+    if (queueTail == queueHead) {
+        portEXIT_CRITICAL(&queueMux);
+        return false;
+    }
+    msg = usbQueue[queueTail];
+    queueTail = (queueTail + 1) % QUEUE_SIZE;
+    portEXIT_CRITICAL(&queueMux);
+    return true;
+}
+
+void USBConnection::processQueue() {
+    RawUsbMessage msg;
+    while (dequeueMidiMessage(msg)) {
+        if (msg.length < 4) {
+            dispatchMidiData(msg.data, msg.length);
+            continue;
+        }
+        uint8_t cin = msg.data[0] & 0x0F;
+
+        switch (cin) {
+            case 0x04:  // SysEx start or continue (3 data bytes)
+                if (!_sysexActive) {
+                    _sysexBuf.clear();
+                    _sysexActive = true;
+                }
+                _sysexBuf.push_back(msg.data[1]);
+                _sysexBuf.push_back(msg.data[2]);
+                _sysexBuf.push_back(msg.data[3]);
+                break;
+
+            case 0x05:  // SysEx end — 1 data byte
+                if (_sysexActive) {
+                    _sysexBuf.push_back(msg.data[1]);
+                    dispatchSysExData(_sysexBuf.data(), _sysexBuf.size());
+                    _sysexActive = false;
+                    _sysexBuf.clear();
+                }
+                break;
+
+            case 0x06:  // SysEx end — 2 data bytes
+                if (_sysexActive) {
+                    _sysexBuf.push_back(msg.data[1]);
+                    _sysexBuf.push_back(msg.data[2]);
+                    dispatchSysExData(_sysexBuf.data(), _sysexBuf.size());
+                    _sysexActive = false;
+                    _sysexBuf.clear();
+                }
+                break;
+
+            case 0x07:  // SysEx end — 3 data bytes
+                if (_sysexActive) {
+                    _sysexBuf.push_back(msg.data[1]);
+                    _sysexBuf.push_back(msg.data[2]);
+                    _sysexBuf.push_back(msg.data[3]);
+                    dispatchSysExData(_sysexBuf.data(), _sysexBuf.size());
+                    _sysexActive = false;
+                    _sysexBuf.clear();
+                }
+                break;
+
+            default:
+                // Non-SysEx message — abort any incomplete SysEx and dispatch normally
+                if (_sysexActive) { _sysexActive = false; _sysexBuf.clear(); }
+                dispatchMidiData(msg.data, msg.length);
+                break;
+        }
+    }
+}
+
+int USBConnection::getQueueSize() const {
+    int size = queueHead - queueTail;
+    if (size < 0) size += QUEUE_SIZE;
+    return size;
+}
+
+const RawUsbMessage& USBConnection::getQueueMessage(int index) const {
+    int realIndex = (queueTail + index) % QUEUE_SIZE;
+    return usbQueue[realIndex];
+}
+
+// ---------- USB Task (core 0) ----------
+
+void USBConnection::_usbTask(void* arg) {
+    USBConnection* usbCon = static_cast<USBConnection*>(arg);
+    for (;;) {
+        usb_host_lib_handle_events(1, &usbCon->eventFlags);
+        usb_host_client_handle_events(usbCon->clientHandle, 1);
+
+        if (usbCon->isReady && usbCon->midiTransfer) {
+            unsigned long now = millis();
+            if ((now - usbCon->lastCheck) > usbCon->interval) {
+                usbCon->lastCheck = now;
+                usb_host_transfer_submit(usbCon->midiTransfer);
+            }
+        }
+    }
+}
+
+// ---------- Internal Callbacks ----------
+
+void USBConnection::_clientEventCallback(const usb_host_client_event_msg_t *eventMsg, void *arg) {
+    USBConnection *usbCon = static_cast<USBConnection*>(arg);
+    esp_err_t err;
+    switch (eventMsg->event) {
+        case USB_HOST_CLIENT_EVENT_NEW_DEV:
+            err = usb_host_device_open(usbCon->clientHandle, eventMsg->new_dev.address, &usbCon->deviceHandle);
+            if (err != ESP_OK) {
+                usbCon->lastError = "Device open failed (err=" + String(err) + ")";
+                return;
+            }
+            {
+                const usb_config_desc_t *config_desc;
+                err = usb_host_get_active_config_descriptor(usbCon->deviceHandle, &config_desc);
+                if (err != ESP_OK) {
+                    usbCon->lastError = "Config descriptor failed (err=" + String(err) + ")";
+                    return;
+                }
+                usbCon->_processConfig(config_desc);
+            }
+            usbCon->lastError = "";
+            usbCon->dispatchConnected();
+            break;
+        case USB_HOST_CLIENT_EVENT_DEV_GONE:
+            usbCon->_onDeviceGone();
+            if (usbCon->midiTransfer) {
+                usb_host_transfer_free(usbCon->midiTransfer);
+                usbCon->midiTransfer = nullptr;
+            }
+            if (usbCon->_outTransfer) {
+                usb_host_transfer_free(usbCon->_outTransfer);
+                usbCon->_outTransfer = nullptr;
+            }
+            usb_host_device_close(usbCon->clientHandle, usbCon->deviceHandle);
+            usbCon->isReady = false;
+            usbCon->dispatchDisconnected();
+            break;
+        default:
+            break;
+    }
+}
+
+void USBConnection::_onReceive(usb_transfer_t *transfer) {
+    USBConnection *usbCon = static_cast<USBConnection*>(transfer->context);
+    if (transfer->status == 0 && transfer->actual_num_bytes >= 4) {
+        // Iterate in 4-byte blocks (each block = 1 USB-MIDI event)
+        for (int offset = 0; offset + 4 <= transfer->actual_num_bytes; offset += 4) {
+            if (transfer->data_buffer[offset] == 0x00) continue;
+            usbCon->enqueueMidiMessage(transfer->data_buffer + offset, 4);
+        }
+    }
+    if (usbCon->isReady) {
+        esp_err_t err = usb_host_transfer_submit(transfer);
+        (void)err;
+    }
+}
+
+void USBConnection::_processConfig(const usb_config_desc_t *config_desc) {
+    const uint8_t* p = config_desc->val;
+    uint16_t totalLength = config_desc->wTotalLength;
+    uint16_t index = 0;
+    bool claimedOk = false;
+
+    while (index < totalLength) {
+        if (index + 1 >= totalLength) break;
+        uint8_t len = p[index];
+        if (len < 2 || (index + len) > totalLength) break;
+
+        uint8_t descriptorType = p[index + 1];
+        if (descriptorType == 0x04) { // Interface Descriptor
+            if (len < 9) {
+                index += len;
+                continue;
+            }
+            uint8_t bInterfaceNumber   = p[index + 2];
+            uint8_t bAlternateSetting  = p[index + 3];
+            uint8_t bNumEndpoints      = p[index + 4];
+            uint8_t bInterfaceClass    = p[index + 5];
+            uint8_t bInterfaceSubClass = p[index + 6];
+            if (bInterfaceClass == 0x01 && bInterfaceSubClass == 0x03) {
+                esp_err_t err = usb_host_interface_claim(clientHandle, deviceHandle, bInterfaceNumber, bAlternateSetting);
+                if (err == ESP_OK) {
+                    uint16_t idx2 = index + len;
+                    while (idx2 < totalLength) {
+                        if (idx2 + 1 >= totalLength) break;
+                        uint8_t len2 = p[idx2];
+                        if (len2 < 2 || (idx2 + len2) > totalLength) break;
+                        uint8_t type2 = p[idx2 + 1];
+                        if (type2 == 0x04) break; // Next interface
+                        
+                        if (type2 == 0x05 && bNumEndpoints > 0) { // It's an endpoint descriptor!
+                            if (len2 >= 7) {
+                                uint8_t bEndpointAddress = p[idx2 + 2];
+                                uint8_t bmAttributes = p[idx2 + 3];
+                                uint16_t wMaxPacketSize = (p[idx2 + 4] | (p[idx2 + 5] << 8));
+                                uint8_t bInterval = p[idx2 + 6];
+                                if (wMaxPacketSize > 512) wMaxPacketSize = 512;
+                                if (wMaxPacketSize == 0) wMaxPacketSize = 64;
+                                uint8_t transferType = bmAttributes & 0x03;
+                                uint32_t timeout = (transferType == 0x02) ? 3000 : 0;
+                                
+                                if (bEndpointAddress & 0x80) { // IN Endpoint
+                                    esp_err_t e2 = usb_host_transfer_alloc(wMaxPacketSize, timeout, &midiTransfer);
+                                    if (e2 == ESP_OK && midiTransfer != nullptr) {
+                                        midiTransfer->device_handle = deviceHandle;
+                                        midiTransfer->bEndpointAddress = bEndpointAddress;
+                                        midiTransfer->callback = _onReceive;
+                                        midiTransfer->context = this;
+                                        midiTransfer->num_bytes = wMaxPacketSize;
+                                        interval = (bInterval == 0) ? 1 : bInterval;
+                                        isReady = true;
+                                        claimedOk = true;
+                                    }
+                                } else { // OUT Endpoint
+                                    esp_err_t e2 = usb_host_transfer_alloc(wMaxPacketSize, timeout, &_outTransfer);
+                                    if (e2 == ESP_OK && _outTransfer != nullptr) {
+                                        _outTransfer->device_handle = deviceHandle;
+                                        _outTransfer->bEndpointAddress = bEndpointAddress;
+                                        _outTransfer->callback = _onSendComplete;
+                                        _outTransfer->context = this;
+                                        _outTransfer->num_bytes = wMaxPacketSize;
+                                    }
+                                }
+                            }
+                        }
+                        idx2 += len2;
+                    }
+                    if (claimedOk) return;
+                    usb_host_interface_release(clientHandle, deviceHandle, bInterfaceNumber);
+                }
+            }
+        }
+        index += len;
+    }
+    if (!claimedOk) {
+        // Fallback: try a default endpoint with safe size
+        esp_err_t err = usb_host_transfer_alloc(64, 3000, &midiTransfer);
+        if (err == ESP_OK && midiTransfer != nullptr) {
+            midiTransfer->device_handle = deviceHandle;
+            midiTransfer->bEndpointAddress = 0x81;
+            midiTransfer->callback = _onReceive;
+            midiTransfer->context = this;
+            midiTransfer->num_bytes = 64;
+            interval = 1;
+            isReady = true;
+        }
+    }
+}
+
+// ---------- Send ----------
+
+// USB-MIDI 1.0 CIN lookup (Table 4-1).
+// Returns CIN for a given MIDI status byte, or 0 on unknown.
+static uint8_t _midiStatusToCIN(uint8_t status) {
+    if (status >= 0x80 && status <= 0xEF) {
+        // Channel Voice / Mode messages: CIN = high nibble
+        return status >> 4;
+    }
+    switch (status) {
+        case 0xF0: return 0x04; // SysEx Start (caller must handle continuation/end)
+        case 0xF1: return 0x02; // MTC Quarter Frame (2 bytes)
+        case 0xF2: return 0x03; // Song Position Pointer (3 bytes)
+        case 0xF3: return 0x02; // Song Select (2 bytes)
+        case 0xF6: return 0x05; // Tune Request (1 byte)
+        case 0xF7: return 0x05; // SysEx End (single-byte, edge case)
+        case 0xF8: return 0x0F; // Timing Clock
+        case 0xFA: return 0x0F; // Start
+        case 0xFB: return 0x0F; // Continue
+        case 0xFC: return 0x0F; // Stop
+        case 0xFE: return 0x0F; // Active Sensing
+        case 0xFF: return 0x0F; // System Reset
+        default:   return 0;    // Undefined (0xF4, 0xF5, 0xFD)
+    }
+}
+
+bool USBConnection::sendMidiMessage(const uint8_t* data, size_t length) {
+    if (!isReady || !_outTransfer || length == 0) return false;
+
+    uint8_t cin = _midiStatusToCIN(data[0]);
+    if (cin == 0) return false;
+
+    // Cable number 0 | CIN
+    uint8_t packet[4] = { cin, 0, 0, 0 };
+    for (size_t i = 0; i < length && i < 3; i++) {
+        packet[i + 1] = data[i];
+    }
+
+    // Einreihen statt verwerfen — siehe Kommentar an TX_QUEUE_SIZE im Header.
+    if (!_pushTx(packet)) return false;
+    _pumpTx();
+    return true;
+}
+
+bool USBConnection::_pushTx(const uint8_t packet[4]) {
+    bool accepted = false;
+    portENTER_CRITICAL(&txMux);
+    const int next = (txHead + 1) % TX_QUEUE_SIZE;
+    if (next != txTail) {  // voll heisst: next würde auf den Schwanz laufen
+        memcpy(txQueue[txHead], packet, 4);
+        txHead = next;
+        accepted = true;
+    }
+    portEXIT_CRITICAL(&txMux);
+    return accepted;
+}
+
+void USBConnection::_pumpTx() {
+    if (!_outTransfer) return;
+
+    uint8_t packet[4];
+    bool have_one = false;
+
+    portENTER_CRITICAL(&txMux);
+    if (!_outTransferBusy && txTail != txHead) {
+        memcpy(packet, txQueue[txTail], 4);
+        txTail = (txTail + 1) % TX_QUEUE_SIZE;
+        _outTransferBusy = true;  // schon hier, damit kein zweiter Aufruf dazwischenfunkt
+        have_one = true;
+    }
+    portEXIT_CRITICAL(&txMux);
+
+    if (!have_one) return;
+
+    memcpy(_outTransfer->data_buffer, packet, 4);
+    _outTransfer->num_bytes = 4;
+    if (usb_host_transfer_submit(_outTransfer) != ESP_OK) {
+        portENTER_CRITICAL(&txMux);
+        _outTransferBusy = false;
+        portEXIT_CRITICAL(&txMux);
+    }
+}
+
+void USBConnection::_onSendComplete(usb_transfer_t *transfer) {
+    USBConnection *usbCon = static_cast<USBConnection*>(transfer->context);
+    if (!usbCon) return;
+
+    portENTER_CRITICAL(&usbCon->txMux);
+    usbCon->_outTransferBusy = false;
+    portEXIT_CRITICAL(&usbCon->txMux);
+
+    usbCon->_pumpTx();  // das nächste Paket sofort hinterher
+}
+
+#endif // ESP32_HOST_MIDI_USB_AVAILABLE

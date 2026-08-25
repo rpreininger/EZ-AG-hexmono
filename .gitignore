@@ -1,0 +1,11 @@
+# Baugut — alles wiederherstellbar, nichts davon gehört ins Repository.
+build/
+build-ios/
+Firmware/.pio/
+Packages/MidiFilterCore/.build/
+Packages/MidiFilterCore/.swiftpm/
+
+# Von xcodegen aus project.yml erzeugt, siehe `make project`.
+MidiFilter.xcodeproj/
+
+.DS_Store
