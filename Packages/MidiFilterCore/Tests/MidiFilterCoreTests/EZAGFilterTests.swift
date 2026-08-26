@@ -174,8 +174,9 @@ final class FretSuppressionTests: XCTestCase {
         XCTAssertEqual(filter.process(on(0, 60, 110)).out, [on(0, 60, 110)])
     }
 
-    /// Measured on 2026-08-25: quiet plucks reach down to velocity 23, so the shipping
-    /// threshold has to sit below that and still catch the fret note at 16.
+    /// The shipping threshold sits directly on the fret constant: 16 goes, everything
+    /// above it counts as a pluck. Quiet plucks were measured down to 23 on 2026-08-25,
+    /// but nothing stops the player from striking softer than that.
     func testQuietPluckSurvivesTheDefaultThreshold() {
         var config = FilterConfig()
         config.fretMode = .velocity
@@ -184,7 +185,14 @@ final class FretSuppressionTests: XCTestCase {
         XCTAssertEqual(filter.process(on(0, 47, 16)).verdict, .suppressedFret)
         XCTAssertEqual(filter.process(off(0, 47, at: 1.0)).verdict, .swallowedNoteOff)
 
-        let quiet = filter.process(on(0, 47, 23, at: 1.001))
+        // One step above the fret constant — the tightest a pluck can be and still count.
+        let faintest = filter.process(on(0, 47, 17, at: 1.001))
+        XCTAssertEqual(faintest.verdict, .passed)
+        XCTAssertEqual(faintest.out, [on(0, 47, 17)])
+        XCTAssertEqual(filter.process(off(0, 47, at: 2.0)).verdict, .passed)
+
+        // The quietest pluck actually measured.
+        let quiet = filter.process(on(0, 47, 23, at: 2.001))
         XCTAssertEqual(quiet.verdict, .passed)
         XCTAssertEqual(quiet.out, [on(0, 47, 23)])
     }

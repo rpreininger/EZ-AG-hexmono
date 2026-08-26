@@ -88,9 +88,12 @@ public struct FilterConfig: Codable, Equatable, Sendable {
 
     // Fret suppression
     public var fretMode: FretMode = .off
-    /// Fret notes always arrive at exactly 16. Measured against the running box on
-    /// 2026-08-25, quiet plucks reach down to 23 — 20 sits in the gap between the two.
-    public var velocityThreshold: UInt8 = 20
+    /// Fret notes always arrive at exactly 16 — the fret buttons are not velocity
+    /// sensitive, so that is a constant, not a measurement that could scatter. How soft
+    /// a pluck can get, on the other hand, only depends on how gently the string is
+    /// played (23 was the quietest measured on 2026-08-25), so the threshold sits as low
+    /// as it can: everything above the fret constant is a pluck.
+    public var velocityThreshold: UInt8 = 16
     /// Match the threshold exactly instead of "at or below".
     public var velocityExactMatch = false
     public var retriggerWindowMs: Double = 60

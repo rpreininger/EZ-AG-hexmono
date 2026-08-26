@@ -215,12 +215,13 @@ midifilter::Config ezag_config() {
     config.retrigger_same_note = true;
     config.fallback_to_held_note = false;
 
-    // Bund-Noten kommen immer mit Velocity 16. Für Anschläge stand hier ursprünglich
-    // 48 bis 96 und damit eine Schwelle von 32 — am 2026-08-25 an der laufenden Box
-    // gemessen reichen leise Anschläge aber bis auf 25 herunter, sechs davon fielen in
-    // zehn Sekunden stumm heraus. 20 liegt sauber zwischen 16 und 25.
+    // Bund-Noten kommen immer mit exakt Velocity 16 — die Tasten sind nicht
+    // anschlagdynamisch, das ist eine Konstante und keine streuende Messung. Wie leise
+    // ein Anschlag wird, hängt dagegen nur am Spiel: erst hiess es 48 bis 96, am
+    // 2026-08-25 an der Box kamen Anschläge bis auf 23 herunter. Die Schwelle liegt
+    // deshalb so tief wie möglich — alles über der Bund-Konstanten ist ein Anschlag.
     config.fret_mode = midifilter::FretMode::Velocity;
-    config.velocity_threshold = 20;
+    config.velocity_threshold = 16;
 
     // Hammer-On und Pull-Off werden mit CC 84 angekündigt.
     config.suppress_hammer_ons = true;

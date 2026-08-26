@@ -89,10 +89,15 @@ angeschlagen, gegriffen oder losgelassen wird.
 Bund-Druck und Anschlag sind **strukturell nicht zu unterscheiden** — beide sind ein
 `Note Off` gefolgt von einem `Note On` nach etwa einer halben Millisekunde. Eine
 Retrigger-Erkennung kann hier nichts ausrichten. Der einzige Unterschied ist die
-Velocity: **Bund immer exakt 16**, Anschläge am 2026-08-20 zwischen 48 und 96. Am
-2026-08-25 an der laufenden Box nachgemessen reichen leise Anschläge bis auf 23 herunter
-— die Schwelle liegt deshalb bei **20**, sauber in der Lücke zwischen 16 und 23. App und
-Firmware benutzen denselben Wert.
+Velocity: **Bund immer exakt 16**, Anschläge am 2026-08-20 zwischen 48 und 96, am
+2026-08-25 an der laufenden Box bis auf 23 herunter.
+
+Die Schwelle liegt deshalb direkt auf der Bund-Konstanten: **16 und darunter ist Bund,
+alles darüber ein Anschlag.** Die 16 ist eine Konstante der Instrumenten-Firmware — die
+Bund-Tasten sind nicht anschlagdynamisch, da streut nichts. Wie leise ein Anschlag wird,
+hängt dagegen nur am Spiel; die 23 sind bloss das Leiseste einer Sitzung. Ein
+Sicherheitsabstand nach oben würde also gegen eine Streuung schützen, die es nicht gibt,
+und dafür leise Anschläge kosten. App und Firmware benutzen denselben Wert.
 
 **Hammer-On und Pull-Off** kommen dagegen mit voller Velocity und sind über die
 Velocity nicht greifbar. Die EZ-AG kündigt sie aber jeweils rund eine Millisekunde

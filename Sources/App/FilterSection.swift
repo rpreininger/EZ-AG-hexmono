@@ -179,7 +179,7 @@ extension FilterConfig {
         config.fallbackToHeldNote = false
         config.legato = false
         config.fretMode = .velocity
-        config.velocityThreshold = 20
+        config.velocityThreshold = 16
         config.velocityExactMatch = false
         return config
     }

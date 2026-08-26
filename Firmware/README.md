@@ -60,7 +60,7 @@ Instrument hat gezeigt, dass Bund-Noten gehalten werden und keine Blitzer sind.
 
 ## Tests
 
-`test/test_firmware.cpp`, 78 Prüfungen ohne Testframework — ein Compiler-Aufruf, läuft in
+`test/test_firmware.cpp`, 81 Prüfungen ohne Testframework — ein Compiler-Aufruf, läuft in
 Millisekunden. Darunter dieselben beiden **real an der EZ-AG gemessenen Sequenzen** wie
 auf dem Mac, damit beide Umsetzungen nachweislich dasselbe tun.
 
@@ -125,11 +125,13 @@ merken von beidem nichts, dafür ist `MidiPort` da.
 - ~~Verdrahtung am echten Board prüfen~~ — am 2026-08-25 über den USB-Host-Weg erledigt:
   alle sechs Saitenkanäle kommen an, gehen auf Kanal 1 hinaus, Legato-Reihenfolge stimmt.
   Die DIN-Verdrahtung mit Optokoppler ist dagegen weiterhin ungeprüft.
-- Die Anschlagschwelle nochmal sauber ausmessen. Am 2026-08-20 hiess es 48 bis 96, am
-  2026-08-25 lagen Anschläge zwischen 23 und 124 — mit der alten Schwelle 32 fielen leise
-  Anschläge stumm heraus. 20 liegt in der gemessenen Lücke zwischen 16 und 23, ist aber
-  aus einer einzigen Sitzung abgeleitet. Die Mac-App benutzt seit dem 2026-08-26 denselben
-  Wert, eine Korrektur gehört also in beide Voreinstellungen.
+- ~~Die Anschlagschwelle nochmal sauber ausmessen~~ — am 2026-08-26 aufgelöst: die
+  Schwelle liegt jetzt direkt auf der Bund-Konstanten 16, weil die nicht streuen kann
+  (die Tasten sind nicht anschlagdynamisch), leise Anschläge dagegen beliebig tief gehen
+  können. Damit ist kein Ausmessen der Lücke mehr nötig. Zu prüfen bleibt nur, ob die
+  Bund-Noten wirklich auf jedem Bund und jeder Saite exakt 16 senden — beobachtet werden
+  müsste eine durchgelassene Note mit auffällig niedriger Velocity. Mac-App und Firmware
+  benutzen denselben Wert, eine Korrektur gehört in beide Voreinstellungen.
 - Optional: stromloser Anlauf — die SidStation hängt nach einem Neustart der Box nie in
   einer Note, weil `setup()` ein All Notes Off schickt; das gilt aber nicht umgekehrt,
   wenn die Box mitten im Spiel abstürzt

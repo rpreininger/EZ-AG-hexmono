@@ -162,7 +162,7 @@ void test_measured_fret_and_pluck() {
 }
 
 void test_quiet_pluck_survives_default_threshold() {
-    begin("Gemessen 2026-08-25: leiser Anschlag mit Velocity 23 kommt durch");
+    begin("Leise Anschläge kommen durch, die Bund-Konstante 16 nicht");
     // Voreinstellung unverändert benutzen — genau diese Schwelle läuft auf der Box.
     Filter filter{Config()};
 
@@ -173,8 +173,15 @@ void test_quiet_pluck_survives_default_threshold() {
     result = filter.process(note_off(5, 47, 1000000));
     CHECK(result.verdict == Verdict::SwallowedNoteOff);
 
-    // Der leiseste gemessene Anschlag darf nicht mit herausfallen.
-    result = filter.process(note_on(5, 47, 23, 1000500));
+    // Eine Stufe über der Bund-Konstanten — der knappste mögliche Anschlag.
+    result = filter.process(note_on(5, 47, 17, 1000500));
+    CHECK(result.verdict == Verdict::Passed);
+    CHECK(result.count == 1 && is_note_on(result, 0, 0, 47, 17));
+    result = filter.process(note_off(5, 47, 2000000));
+    CHECK(result.verdict == Verdict::Passed);
+
+    // Der leiseste tatsächlich gemessene Anschlag.
+    result = filter.process(note_on(5, 47, 23, 2000500));
     CHECK(result.verdict == Verdict::Passed);
     CHECK(result.count == 1 && is_note_on(result, 0, 0, 47, 23));
 }
