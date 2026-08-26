@@ -61,6 +61,15 @@ struct Config {
     /// einer echten Saite. Die Velocity des Anschlags bleibt erhalten, es klingt ja
     /// weiterhin derselbe Anschlag. Braucht eine arbeitende Bund-Erkennung.
     bool fret_slide = false;
+    /// Beim Rutschen klingt der angeschlagene Ton weiter — die Tonhöhe zu verschieben ist
+    /// also ein Pitch Bend und keine neue Note. Die Hüllkurve wird dabei überhaupt nicht
+    /// angefasst. Passt das Intervall nicht in den Bend-Bereich, wird auf einen echten
+    /// Notenwechsel zurückgefallen: eine neu angerissene Note ist besser als eine falsche.
+    bool slide_uses_pitch_bend = true;
+    /// Halbtöne, die der Synth pro Richtung beugt. Muss mit der Einstellung am Synth
+    /// übereinstimmen, sonst kommt jedes Rutschen im falschen Intervall heraus. Zwei ist
+    /// die fast überall übliche Voreinstellung.
+    uint8_t pitch_bend_range = 2;
     /// So lange wird das Note Off einer klingenden Note zurückgehalten, um zu sehen, ob
     /// eine Bund-Note folgt. Die EZ-AG schickt das Paar rund eine halbe Millisekunde
     /// auseinander; genau so viel Nachklang kostet es bei einem echten Loslassen.
@@ -149,6 +158,8 @@ private:
     bool is_fret_press(const Event& event, bool string_was_silent) const;
     bool can_detect_fret_press() const;
     void slide(uint8_t channel, uint8_t from, uint8_t to, Result& out);
+    uint16_t bend_value(int semitones) const;
+    void centre_bend(Result& out);
 
     void emit_note_on(uint8_t channel, uint8_t note, uint8_t velocity, Result& out);
     void emit_note_off(uint8_t channel, uint8_t note, Result& out);
@@ -164,6 +175,9 @@ private:
     uint8_t stack_count_ = 0;
     HeldNote sounding_;
     bool has_sounding_ = false;
+    /// Halbtöne, um die der Ausgangskanal gerade gebeugt ist — ein Rutschen lässt das
+    /// stehen, bis etwas Neues angeschlagen wird.
+    int8_t bend_ = 0;
 };
 
 }  // namespace midifilter

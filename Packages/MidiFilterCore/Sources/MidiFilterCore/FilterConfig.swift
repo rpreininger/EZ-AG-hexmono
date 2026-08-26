@@ -110,6 +110,16 @@ public struct FilterConfig: Codable, Equatable, Sendable {
     /// Needs the fret detection to be on (`velocity` or `retrigger`), since that is what
     /// tells a fingering change apart from the next pluck.
     public var fretSlide = false
+    /// A slide moves the note that is *already* sounding, so a pitch bend is the honest
+    /// way to do it: the envelope is never touched and nothing is retriggered.
+    ///
+    /// Falls back to a real note change when the interval does not fit into the bend
+    /// range — a retriggered note beats a wrong pitch.
+    public var slideUsesPitchBend = true
+    /// Semitones the synth's pitch bend covers in each direction. Has to match what the
+    /// synth is set to, otherwise every slide comes out at the wrong interval. Two is the
+    /// near universal default; raise it here *and* on the synth to slide further.
+    public var pitchBendRange: UInt8 = 2
     /// How long the release of a sounding note is held back to see whether a fret note
     /// follows. The EZ-AG sends the pair about half a millisecond apart; the window only
     /// has to be wide enough to cover that, and it costs exactly this much extra ring
@@ -167,6 +177,8 @@ public extension FilterConfig {
         config.blipMaxMs = decode(.blipMaxMs, config.blipMaxMs)
         config.fretSlide = decode(.fretSlide, config.fretSlide)
         config.slideWindowMs = decode(.slideWindowMs, config.slideWindowMs)
+        config.slideUsesPitchBend = decode(.slideUsesPitchBend, config.slideUsesPitchBend)
+        config.pitchBendRange = decode(.pitchBendRange, config.pitchBendRange)
         config.suppressHammerOns = decode(.suppressHammerOns, config.suppressHammerOns)
         config.hammerOnWindowMs = decode(.hammerOnWindowMs, config.hammerOnWindowMs)
         config.transpose = decode(.transpose, config.transpose)

@@ -60,7 +60,7 @@ Instrument hat gezeigt, dass Bund-Noten gehalten werden und keine Blitzer sind.
 
 ## Tests
 
-`test/test_firmware.cpp`, 101 Prüfungen ohne Testframework — ein Compiler-Aufruf, läuft in
+`test/test_firmware.cpp`, 112 Prüfungen ohne Testframework — ein Compiler-Aufruf, läuft in
 Millisekunden. Darunter dieselben beiden **real an der EZ-AG gemessenen Sequenzen** wie
 auf dem Mac, damit beide Umsetzungen nachweislich dasselbe tun.
 
@@ -128,6 +128,10 @@ merken von beidem nichts, dafür ist `MidiPort` da.
   vom 2026-08-20 geschlossen und nicht selbst gemessen — siehe README im Wurzelverzeichnis.
   Passiert nichts, kündigt die EZ-AG das Rutschen vermutlich per `CC 84` an; dann wäre
   `suppress_hammer_ons = false` der richtige Hebel.
+- **Bend-Bereich der SidStation prüfen.** Das Rutschen geht als Pitch Bend hinaus und
+  rechnet mit `pitch_bend_range` (voreingestellt ±2 Halbtöne). Steht die SidStation auf
+  etwas anderem, kommt jedes Rutschen im falschen Intervall heraus. Für weite Rutscher
+  beide Seiten auf ±12 stellen.
 
 - ~~Verdrahtung am echten Board prüfen~~ — am 2026-08-25 über den USB-Host-Weg erledigt:
   alle sechs Saitenkanäle kommen an, gehen auf Kanal 1 hinaus, Legato-Reihenfolge stimmt.

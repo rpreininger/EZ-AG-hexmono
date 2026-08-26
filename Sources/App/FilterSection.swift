@@ -119,6 +119,18 @@ struct FilterSection: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if engine.config.fretSlide {
+                Toggle("Als Pitch Bend statt als neue Note", isOn: config.slideUsesPitchBend)
+                Text("Es klingt ja weiterhin derselbe Anschlag — ihn zu verschieben ist ein Pitch Bend. Die Hüllkurve wird dabei überhaupt nicht angefasst. Passt das Intervall nicht in den Bend-Bereich, wird auf einen echten Notenwechsel zurückgefallen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if engine.config.slideUsesPitchBend {
+                    Stepper("Bend-Bereich des Synths: ±\(engine.config.pitchBendRange) Halbtöne",
+                            value: config.pitchBendRange, in: 1...24)
+                        .help("Muss mit der Einstellung am Synth übereinstimmen, sonst kommt jedes Rutschen im falschen Intervall heraus. ±2 ist fast überall die Voreinstellung.")
+                }
+
                 Slider(value: config.slideWindowMs, in: 2...40, step: 1) {
                     Text("Fenster")
                 } minimumValueLabel: {

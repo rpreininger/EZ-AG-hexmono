@@ -73,6 +73,13 @@ bool is_note_off(const Result& result, uint8_t index, uint8_t channel, uint8_t n
            result.events[index].channel == channel && result.events[index].data1 == note;
 }
 
+bool is_bend(const Result& result, uint8_t index, uint8_t channel, uint16_t value) {
+    if (index >= result.count || result.events[index].kind != MessageKind::PitchBend) return false;
+    const uint16_t actual = static_cast<uint16_t>(result.events[index].data1) |
+                            static_cast<uint16_t>(result.events[index].data2 << 7);
+    return result.events[index].channel == channel && actual == value;
+}
+
 // MARK: - Kanal-Merge und Monophonie
 
 void test_channel_merge() {
@@ -132,7 +139,7 @@ void test_monophonic() {
 // MARK: - Rutschen auf dem Bund
 
 void test_fret_slide() {
-    begin("Griffwechsel auf klingender Saite verstimmt den Anschlag");
+    begin("Griffwechsel auf klingender Saite beugt die Tonhöhe");
     Config config;
     config.fret_slide = true;
     Filter filter(config);
@@ -146,22 +153,63 @@ void test_fret_slide() {
     CHECK(result.verdict == Verdict::HeldForSlide);
     CHECK(result.count == 0);
 
-    // Die Bund-Note eine halbe Millisekunde später: neue Tonhöhe, gleiche Velocity, und
-    // die neue Note kommt vor dem Loslassen der alten, damit der Synth gleitet.
-    result = filter.process(note_on(5, 47, 16, 1000500));
+    // Die Bund-Note eine halbe Millisekunde später: ein Halbton hoch, bei Bend-Bereich
+    // zwei also die halbe Strecke nach oben. Keine neue Note, keine neue Hüllkurve.
+    result = filter.process(note_on(5, 41, 16, 1000500));
     CHECK(result.verdict == Verdict::Slid);
-    CHECK(result.count == 2);
-    CHECK(is_note_on(result, 0, 0, 47, 48));
-    CHECK(is_note_off(result, 1, 0, 40));
+    CHECK(result.count == 1 && is_bend(result, 0, 0, 12288));
 
-    // Weiterrutschen trägt denselben Anschlag weiter.
-    result = filter.process(note_off(5, 47, 2000000));
+    // Zurückrutschen landet wieder genau in der Mitte.
+    result = filter.process(note_off(5, 41, 2000000));
     CHECK(result.verdict == Verdict::HeldForSlide);
-    result = filter.process(note_on(5, 49, 16, 2000500));
-    CHECK(result.count == 2 && is_note_on(result, 0, 0, 49, 48) && is_note_off(result, 1, 0, 47));
+    result = filter.process(note_on(5, 40, 16, 2000500));
+    CHECK(result.count == 1 && is_bend(result, 0, 0, 8192));
 }
 
-void test_fret_slide_release_and_pluck() {
+void test_fret_slide_release_and_range() {
+    begin("Losgelassen wird die Note, die wirklich klingt");
+    Config config;
+    config.fret_slide = true;
+    Filter filter(config);
+    filter.process(note_on(5, 40, 48, 0));
+    filter.process(note_off(5, 40, 1000000));
+    filter.process(note_on(5, 42, 16, 1000500));
+
+    Result result = filter.process(note_off(5, 42, 2000000));
+    CHECK(result.verdict == Verdict::HeldForSlide);
+    // Auf dem Kabel klingt weiterhin die 40 — die muss aus.
+    result = filter.tick(2010000);
+    CHECK(result.count == 1 && is_note_off(result, 0, 0, 40));
+
+    begin("Weiter als der Bend-Bereich: zurück auf einen echten Notenwechsel");
+    Filter narrow(config);
+    narrow.process(note_on(5, 40, 48, 0));
+    narrow.process(note_off(5, 40, 1000000));
+    result = narrow.process(note_on(5, 47, 16, 1000500));
+    CHECK(result.verdict == Verdict::Slid);
+    CHECK(result.count == 2 && is_note_on(result, 0, 0, 47, 48) && is_note_off(result, 1, 0, 40));
+
+    begin("Mit weitem Bend-Bereich trägt der Bend das ganze Rutschen");
+    Config wide = config;
+    wide.pitch_bend_range = 12;
+    Filter filter_wide(wide);
+    filter_wide.process(note_on(5, 40, 48, 0));
+    filter_wide.process(note_off(5, 40, 1000000));
+    result = filter_wide.process(note_on(5, 47, 16, 1000500));
+    CHECK(result.count == 1 && is_bend(result, 0, 0, 12970));
+
+    begin("Vor dem nächsten Anschlag geht der Bend zurück in die Mitte");
+    // Die Firmware ist voreingestellt auf Legato, die neue Note kommt also vor dem
+    // Loslassen der alten. In jedem Fall steht der Bend vor der neuen Note — sonst erbt
+    // sie die Verstimmung des Rutschers.
+    result = filter_wide.process(note_on(4, 50, 90, 2000000));
+    CHECK(result.count == 3);
+    CHECK(is_bend(result, 0, 0, 8192));
+    CHECK(is_note_on(result, 1, 0, 50, 90));
+    CHECK(is_note_off(result, 2, 0, 40));
+}
+
+void test_fret_slide_no_follower_and_pluck() {
     begin("Ohne folgende Bund-Note wird das Loslassen nachgereicht");
     Config config;
     config.fret_slide = true;
@@ -170,14 +218,10 @@ void test_fret_slide_release_and_pluck() {
 
     Result result = filter.process(note_off(5, 40, 1000000));
     CHECK(result.verdict == Verdict::HeldForSlide);
-
-    // Innerhalb des Fensters passiert nichts …
     result = filter.tick(1003000);
     CHECK(result.count == 0);
-    // … danach kommt das Loslassen heraus und der Ton endet.
     result = filter.tick(1010000);
     CHECK(result.count == 1 && is_note_off(result, 0, 0, 40));
-    // Und bleibt heraussen: kein zweites Mal.
     result = filter.tick(1020000);
     CHECK(result.count == 0);
 
@@ -203,6 +247,20 @@ void test_fret_slide_off_keeps_old_behaviour() {
     result = filter.process(note_on(5, 47, 16, 1000500));
     CHECK(result.verdict == Verdict::SuppressedFret);
     CHECK(result.count == 0);
+}
+
+void test_panic_centres_the_bend() {
+    begin("Panik beendet die Note, zentriert den Bend und schickt All Notes Off");
+    Config config;
+    config.fret_slide = true;
+    Filter filter(config);
+    filter.process(note_on(5, 40, 48, 0));
+
+    Result result = filter.panic();
+    CHECK(result.count == 3);
+    CHECK(is_note_off(result, 0, 0, 40));
+    CHECK(is_bend(result, 1, 0, 8192));
+    CHECK(result.events[2].kind == MessageKind::ControlChange && result.events[2].data1 == 123);
 }
 
 // MARK: - Am Instrument gemessene Sequenzen
@@ -430,8 +488,10 @@ int main() {
     test_measured_hammer_on();
     test_quiet_pluck_survives_default_threshold();
     test_fret_slide();
-    test_fret_slide_release_and_pluck();
+    test_fret_slide_release_and_range();
+    test_fret_slide_no_follower_and_pluck();
     test_fret_slide_off_keeps_old_behaviour();
+    test_panic_centres_the_bend();
     test_hammer_on_pass_through();
     test_timer_wraparound();
     test_parser_running_status();

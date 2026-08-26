@@ -113,6 +113,9 @@ public final class EZAGFilter {
     private var strings = [StringState](repeating: StringState(), count: 16)
     private var stack: [HeldNote] = []
     private var sounding: HeldNote?
+    /// Semitones the output channel is currently bent by — a slide leaves it standing
+    /// until something new is struck.
+    private var bend = 0
 
     public init(config: FilterConfig = FilterConfig()) {
         self.config = config
@@ -130,6 +133,10 @@ public final class EZAGFilter {
         if needsFlush, let sounding {
             flush.append(MIDIEvent(channel: old.outputChannel,
                                    message: .noteOff(note: sounding.out, velocity: 0)))
+            if bend != 0 {
+                flush.append(MIDIEvent(channel: old.outputChannel, message: .pitchBend(value: 8192)))
+                bend = 0
+            }
             self.sounding = nil
             stack.removeAll()
         }
@@ -142,6 +149,7 @@ public final class EZAGFilter {
         strings = [StringState](repeating: StringState(), count: 16)
         stack.removeAll()
         sounding = nil
+        bend = 0
     }
 
     /// Everything off on the output channel.
@@ -151,6 +159,7 @@ public final class EZAGFilter {
             out.append(MIDIEvent(channel: config.outputChannel,
                                  message: .noteOff(note: sounding.out, velocity: 0)))
         }
+        out.append(MIDIEvent(channel: config.outputChannel, message: .pitchBend(value: 8192)))
         out.append(MIDIEvent(channel: config.outputChannel, message: .controlChange(controller: 123, value: 0)))
         reset()
         return out
@@ -318,6 +327,22 @@ public final class EZAGFilter {
         config.fretMode == .velocity || config.fretMode == .retrigger
     }
 
+    /// 14 bit, centre 8192. Deliberately integer arithmetic — the firmware does the same
+    /// and both have to land on exactly the same value.
+    private func bendValue(semitones: Int) -> UInt16 {
+        let span = Int(max(1, config.pitchBendRange))
+        let value = 8192 + (semitones * 8192) / span
+        return UInt16(max(0, min(16383, value)))
+    }
+
+    /// A slide leaves the channel bent. Before anything new is struck it has to go back
+    /// to the centre, otherwise the new note inherits the old one's detune.
+    private func centredBend() -> [MIDIEvent] {
+        guard bend != 0 else { return [] }
+        bend = 0
+        return [MIDIEvent(channel: config.outputChannel, message: .pitchBend(value: 8192))]
+    }
+
     /// A fingering change on a ringing string: the pitch moves, the strike keeps its
     /// velocity, and the envelope is not retriggered.
     private func slide(channel: UInt8, from old: UInt8, to new: UInt8) -> [MIDIEvent] {
@@ -329,6 +354,28 @@ public final class EZAGFilter {
         }
 
         let target = transposed(new)
+
+        // The note is already sounding — moving it is a pitch bend, not a new note. The
+        // envelope is never touched, which is exactly what a slide sounds like.
+        if config.slideUsesPitchBend {
+            let interval = Int(target) - Int(current.out)
+            if abs(interval) <= Int(max(1, config.pitchBendRange)) {
+                bend = interval
+                stack.removeAll { $0.channel == channel && ($0.source == old || $0.source == new) }
+                // Same voice, same note on the wire: only the fingering it answers to
+                // changes, so the release of *that* is what ends the note.
+                var slid = current
+                slid.source = new
+                stack.append(slid)
+                sounding = slid
+                return [MIDIEvent(channel: config.outputChannel,
+                                  message: .pitchBend(value: bendValue(semitones: interval)))]
+            }
+        }
+
+        // Further than the synth can bend: a real note change, with the bend centred
+        // first — a retriggered note is better than a wrong pitch.
+        var out = centredBend()
         stack.removeAll { $0.channel == channel && ($0.source == old || $0.source == new) }
         // The pluck's velocity carries over: it is still that strike sounding, only at a
         // different pitch.
@@ -336,13 +383,14 @@ public final class EZAGFilter {
         stack.append(slid)
         sounding = slid
 
-        guard target != current.out else { return [] }
+        guard target != current.out else { return out }
         // New note first, then release the old one, so a mono synth glides instead of
-        // retriggering its envelope — which is the whole point of a slide.
-        return [MIDIEvent(channel: config.outputChannel,
-                          message: .noteOn(note: target, velocity: current.velocity)),
-                MIDIEvent(channel: config.outputChannel,
-                          message: .noteOff(note: current.out, velocity: 0))]
+        // retriggering its envelope.
+        out.append(MIDIEvent(channel: config.outputChannel,
+                             message: .noteOn(note: target, velocity: current.velocity)))
+        out.append(MIDIEvent(channel: config.outputChannel,
+                             message: .noteOff(note: current.out, velocity: 0)))
+        return out
     }
 
     private func isFretPress(note: UInt8, velocity: UInt8, event: MIDIEvent, stringWasSilent: Bool) -> Bool {
@@ -369,7 +417,8 @@ public final class EZAGFilter {
     private func emitNoteOn(channel: UInt8, note: UInt8, velocity: UInt8) -> [MIDIEvent] {
         let out = transposed(note)
         guard config.monophonic else {
-            return [MIDIEvent(channel: config.outputChannel, message: .noteOn(note: out, velocity: velocity))]
+            return centredBend()
+                + [MIDIEvent(channel: config.outputChannel, message: .noteOn(note: out, velocity: velocity))]
         }
         stack.removeAll { $0.channel == channel && $0.source == note }
         let attacked = HeldNote(channel: channel, source: note, out: out, velocity: velocity)
@@ -413,6 +462,7 @@ public final class EZAGFilter {
             sounding = nil
 
         case let (nil, .some(new)):
+            out += centredBend()
             out.append(MIDIEvent(channel: channel, message: .noteOn(note: new.out, velocity: new.velocity)))
             sounding = new
 
@@ -423,17 +473,20 @@ public final class EZAGFilter {
                 let struckAgain = attacked.map { $0.channel == new.channel && $0.source == new.source } ?? false
                 if struckAgain && config.retriggerSameNote {
                     out.append(MIDIEvent(channel: channel, message: .noteOff(note: old.out, velocity: 0)))
+                    out += centredBend()
                     out.append(MIDIEvent(channel: channel, message: .noteOn(note: new.out, velocity: new.velocity)))
                 }
                 sounding = new
             } else if config.legato {
                 // New note first so a mono synth in legato mode glides instead of
                 // retriggering its envelope.
+                out += centredBend()
                 out.append(MIDIEvent(channel: channel, message: .noteOn(note: new.out, velocity: new.velocity)))
                 out.append(MIDIEvent(channel: channel, message: .noteOff(note: old.out, velocity: 0)))
                 sounding = new
             } else {
                 out.append(MIDIEvent(channel: channel, message: .noteOff(note: old.out, velocity: 0)))
+                out += centredBend()
                 out.append(MIDIEvent(channel: channel, message: .noteOn(note: new.out, velocity: new.velocity)))
                 sounding = new
             }

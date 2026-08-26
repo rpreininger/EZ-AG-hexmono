@@ -127,21 +127,34 @@ später. Der Filter hält deshalb das `Note Off` einer klingenden Note kurz zur�
 
 ```
 0.000  ch6  Note Off  E2 (40)          → zurückgehalten
-0.001  ch6  Note On   B2 (47)  v16     → Bund-Note: es war ein Griffwechsel
-       out  Note On   B2 (47)  v48     → neue Tonhöhe, Velocity des Anschlags
-       out  Note Off  E2 (40)          → erst danach die alte Note los
+0.001  ch6  Note On   F2 (41)  v16     → Bund-Note: es war ein Griffwechsel
+       out  Pitch Bend +4096           → derselbe Ton, einen Halbton höher
 ```
 
-Drei Dinge fallen dabei zusammen:
+**Es ist ein Pitch Bend, keine neue Note.** Der angeschlagene Ton klingt ja weiter — ihn
+zu verschieben heisst, ihn zu beugen. Die Hüllkurve wird dabei überhaupt nicht angefasst,
+und die Velocity des Anschlags bleibt ohnehin erhalten, weil dieselbe Note stehen bleibt.
+Was folgt:
 
-- **Die Velocity des Anschlags bleibt.** Es klingt weiterhin derselbe Anschlag, nur auf
-  einer anderen Tonhöhe — nicht die 16 der Bund-Taste.
-- **Die neue Note kommt vor dem Loslassen der alten.** Ein Mono-Synth gleitet dadurch,
-  statt seine Hüllkurve neu anzureissen.
+- **Der Bend-Bereich muss stimmen.** Der Filter rechnet das Intervall in einen
+  Bend-Wert um und braucht dafür den Bereich, auf den der Synth eingestellt ist
+  (`pitchBendRange`, voreingestellt ±2 Halbtöne). Stimmt er nicht überein, kommt jedes
+  Rutschen im falschen Intervall heraus.
+- **Weiter als der Bereich geht es nicht.** Ein Rutschen über mehr Bünde als der Synth
+  beugen kann, fällt auf einen echten Notenwechsel zurück — neue Note zuerst, dann die
+  alte los, damit ein Mono-Synth wenigstens gleitet. Eine neu angerissene Note ist
+  besser als eine falsche Tonhöhe. Wer weit rutschen will, stellt Synth *und* Filter auf
+  ±12 und bekommt das ganze Griffbrett gebeugt.
+- **Vor dem nächsten Anschlag geht der Bend zurück in die Mitte**, sonst erbt die neue
+  Note die Verstimmung des Rutschers.
 - **Kommt statt der Bund-Note ein Anschlag**, geht das zurückgehaltene `Note Off` voraus
   und alles läuft wie bisher. Kommt gar nichts, wird es nach dem Fenster nachgereicht —
   ein echtes Loslassen klingt also `slideWindowMs` (6 ms) länger nach. Mehr kostet der
   Modus nicht.
+
+Wer den Notenwechsel lieber mag als den Bend, schaltet **„Als Pitch Bend statt als neue
+Note"** aus; dann erklingt bei jedem Griffwechsel eine neue Note mit der Velocity des
+Anschlags.
 
 **Noch nicht am Instrument geprüft:** dass ein Rutschen wirklich als Bund-Note
 ankommt. Gemessen ist nur, dass *Greifen* auf einer klingenden Saite `Note Off` + `Note
@@ -166,7 +179,7 @@ die Tonhöhe verschoben hat.
 
 ## Stand
 
-- Filterlogik: 36 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
+- Filterlogik: 40 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
 - Ende-zu-Ende über echtes CoreMIDI geprüft, Latenz 0,1–0,4 ms
 - An der echten EZ-AG eingestellt und gespielt
 - Offen: iOS-Build

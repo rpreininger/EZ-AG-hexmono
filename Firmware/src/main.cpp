@@ -227,6 +227,11 @@ midifilter::Config ezag_config() {
     // Tonhöhe wandern, statt die Bund-Note wegzuwerfen und den Ton zu beenden. Kostet
     // beim echten Loslassen `slide_window_us` Nachklang, sonst nichts.
     config.fret_slide = true;
+    // Als Pitch Bend, denn es klingt ja weiterhin derselbe Anschlag. Der Bereich muss mit
+    // der Einstellung am Synth übereinstimmen — ±2 Halbtöne ist die übliche Voreinstellung.
+    // Passt ein Rutschen nicht hinein, fällt der Filter auf einen Notenwechsel zurück.
+    config.slide_uses_pitch_bend = true;
+    config.pitch_bend_range = 2;
 
     // Hammer-On und Pull-Off werden mit CC 84 angekündigt.
     config.suppress_hammer_ons = true;

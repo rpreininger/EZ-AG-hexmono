@@ -347,8 +347,11 @@ final class HousekeepingTests: XCTestCase {
     func testPanicReleasesTheSoundingNote() {
         let filter = EZAGFilter()
         _ = filter.process(on(0, 60))
+        // The bend goes back to the centre unconditionally: panic is the button for
+        // getting out of trouble, and the synth may be left bent by an earlier run.
         XCTAssertEqual(filter.panic(), [
             off(0, 60),
+            MIDIEvent(channel: 0, message: .pitchBend(value: 8192)),
             MIDIEvent(channel: 0, message: .controlChange(controller: 123, value: 0)),
         ])
     }
@@ -392,18 +395,23 @@ final class MIDIEventTests: XCTestCase {
 }
 
 /// Sliding the fingering on a string that is still ringing has to move the pitch of the
-/// struck note instead of dropping the fret note and ending the sound.
+/// note that is already sounding — which makes it a pitch bend, not a new note.
 final class FretSlideTests: XCTestCase {
 
-    private func slideConfig() -> FilterConfig {
+    private func slideConfig(bendRange: UInt8 = 2) -> FilterConfig {
         var config = FilterConfig()
         config.fretMode = .velocity
         config.fretSlide = true
         config.slideWindowMs = 6
+        config.pitchBendRange = bendRange
         return config
     }
 
-    func testFretPressRetunesTheRingingNote() {
+    private func bend(_ value: UInt16) -> MIDIEvent {
+        MIDIEvent(channel: 0, message: .pitchBend(value: value))
+    }
+
+    func testFretSlideBendsTheRingingNote() {
         let filter = EZAGFilter(config: slideConfig())
 
         // The open low E, struck.
@@ -414,29 +422,60 @@ final class FretSlideTests: XCTestCase {
         XCTAssertEqual(release.verdict, .heldForSlide)
         XCTAssertTrue(release.out.isEmpty)
 
-        // … and the fret note half a millisecond later. New pitch, same strike: the
-        // velocity of the pluck carries over, and the new note comes before the old one
-        // is released so the synth glides.
+        // … and the fret note half a millisecond later. One semitone up, and with a bend
+        // range of two that is half of the way up: nothing is retriggered, the note that
+        // is already sounding simply moves.
+        let slide = filter.process(on(5, 41, 16, at: 1.0005))
+        XCTAssertEqual(slide.verdict, .slid)
+        XCTAssertEqual(slide.out, [bend(12288)])
+
+        // Sliding back down lands exactly on the centre again.
+        XCTAssertEqual(filter.process(off(5, 41, at: 2.0)).verdict, .heldForSlide)
+        XCTAssertEqual(filter.process(on(5, 40, 16, at: 2.0005)).out, [bend(8192)])
+    }
+
+    func testTheReleaseEndsTheNoteThatIsActuallySounding() {
+        let filter = EZAGFilter(config: slideConfig())
+        _ = filter.process(on(5, 40, 48))
+        _ = filter.process(off(5, 40, at: 1.0))
+        _ = filter.process(on(5, 42, 16, at: 1.0005))
+
+        // Letting go of the *new* fingering ends the note — and what has to be switched
+        // off is the note that went out on the wire, not the fingering.
+        XCTAssertEqual(filter.process(off(5, 42, at: 2.0)).verdict, .heldForSlide)
+        XCTAssertEqual(filter.tick(now: 2.01), [off(0, 40)])
+        XCTAssertFalse(filter.hasPendingNotes)
+    }
+
+    func testSlideBeyondTheBendRangeFallsBackToANoteChange() {
+        let filter = EZAGFilter(config: slideConfig(bendRange: 2))
+        _ = filter.process(on(5, 40, 48))
+        _ = filter.process(off(5, 40, at: 1.0))
+
+        // Seven semitones is further than the synth can bend. Better a retriggered note
+        // than a wrong pitch — new note first, so a mono synth still glides.
         let slide = filter.process(on(5, 47, 16, at: 1.0005))
         XCTAssertEqual(slide.verdict, .slid)
         XCTAssertEqual(slide.out, [on(0, 47, 48), off(0, 40)])
     }
 
-    func testSlidingOnKeepsCarryingTheSameStrike() {
+    func testAWiderBendRangeCarriesTheWholeSlide() {
+        let filter = EZAGFilter(config: slideConfig(bendRange: 12))
+        _ = filter.process(on(5, 40, 48))
+        _ = filter.process(off(5, 40, at: 1.0))
+        // Same seven semitones, but now they fit: 7 of 12 above the centre.
+        XCTAssertEqual(filter.process(on(5, 47, 16, at: 1.0005)).out, [bend(12970)])
+    }
+
+    func testTheBendIsCentredBeforeTheNextStrike() {
         let filter = EZAGFilter(config: slideConfig())
         _ = filter.process(on(5, 40, 48))
         _ = filter.process(off(5, 40, at: 1.0))
-        _ = filter.process(on(5, 47, 16, at: 1.0005))
+        XCTAssertEqual(filter.process(on(5, 41, 16, at: 1.0005)).out, [bend(12288)])
 
-        // Sliding one fret further does the same thing again, still on the first strike.
-        XCTAssertEqual(filter.process(off(5, 47, at: 2.0)).verdict, .heldForSlide)
-        XCTAssertEqual(filter.process(on(5, 49, 16, at: 2.0005)).out, [on(0, 49, 48), off(0, 47)])
-
-        // Letting go ends the note — nothing follows within the window.
-        XCTAssertEqual(filter.process(off(5, 49, at: 3.0)).verdict, .heldForSlide)
-        XCTAssertEqual(filter.tick(now: 3.001), [])
-        XCTAssertEqual(filter.tick(now: 3.01), [off(0, 49)])
-        XCTAssertFalse(filter.hasPendingNotes)
+        // Another string is struck: the new note must not inherit the old one's detune.
+        XCTAssertEqual(filter.process(on(4, 50, 90, at: 2.0)).out,
+                       [off(0, 40), bend(8192), on(0, 50, 90)])
     }
 
     func testHeldReleaseIsHandedOnWhenAPluckFollowsInstead() {
@@ -449,6 +488,17 @@ final class FretSlideTests: XCTestCase {
         let pluck = filter.process(on(5, 47, 96, at: 1.0005))
         XCTAssertEqual(pluck.verdict, .passed)
         XCTAssertEqual(pluck.out, [off(0, 47), on(0, 47, 96)])
+    }
+
+    func testNothingFollowsTheHeldRelease() {
+        let filter = EZAGFilter(config: slideConfig())
+        _ = filter.process(on(5, 40, 48))
+        XCTAssertEqual(filter.process(off(5, 40, at: 1.0)).verdict, .heldForSlide)
+
+        // Inside the window nothing happens, after it the release is handed on late.
+        XCTAssertEqual(filter.tick(now: 1.003), [])
+        XCTAssertEqual(filter.tick(now: 1.01), [off(0, 40)])
+        XCTAssertEqual(filter.tick(now: 1.02), [])
     }
 
     func testAFretPressOnASilentStringIsStillJustAFretPress() {

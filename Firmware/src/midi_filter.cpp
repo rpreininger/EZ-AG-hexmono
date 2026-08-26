@@ -46,6 +46,7 @@ Result Filter::set_config(const Config& config) {
         out.add(event);
         has_sounding_ = false;
         stack_count_ = 0;
+        centre_bend(out);
     }
     config_ = config;
     return out;
@@ -57,6 +58,7 @@ void Filter::reset() {
     }
     stack_count_ = 0;
     has_sounding_ = false;
+    bend_ = 0;
 }
 
 Result Filter::panic() {
@@ -64,6 +66,10 @@ Result Filter::panic() {
     if (has_sounding_) {
         out.add(make(MessageKind::NoteOff, sounding_.out, 0));
     }
+    // Bedingungslos zurück in die Mitte: Panik ist der Knopf für den Notfall, und der
+    // Synth kann aus einem früheren Lauf noch gebeugt dastehen.
+    const uint16_t centre = 8192;
+    out.add(make(MessageKind::PitchBend, centre & 0x7F, (centre >> 7) & 0x7F));
     out.add(make(MessageKind::ControlChange, 123, 0));  // All Notes Off
     reset();
     return out;
@@ -237,6 +243,25 @@ Result Filter::tick(uint32_t now_us) {
     return out;
 }
 
+/// 14 Bit, Mitte 8192. Bewusst Ganzzahlarithmetik — die Mac-App rechnet genauso, beide
+/// müssen auf demselben Wert landen.
+uint16_t Filter::bend_value(int semitones) const {
+    const int span = config_.pitch_bend_range < 1 ? 1 : static_cast<int>(config_.pitch_bend_range);
+    const int value = 8192 + (semitones * 8192) / span;
+    if (value < 0) return 0;
+    if (value > 16383) return 16383;
+    return static_cast<uint16_t>(value);
+}
+
+/// Ein Rutschen lässt den Kanal gebeugt stehen. Bevor etwas Neues angeschlagen wird, muss
+/// er zurück in die Mitte — sonst erbt die neue Note die Verstimmung der alten.
+void Filter::centre_bend(Result& out) {
+    if (bend_ == 0) return;
+    bend_ = 0;
+    const uint16_t centre = 8192;
+    out.add(make(MessageKind::PitchBend, centre & 0x7F, (centre >> 7) & 0x7F));
+}
+
 /// Rutschen braucht eine Bund-Erkennung, die überhaupt antworten kann — sonst würde
 /// jedes zurückgehaltene Note Off nur verspätet weitergereicht.
 bool Filter::can_detect_fret_press() const {
@@ -255,6 +280,30 @@ void Filter::slide(uint8_t channel, uint8_t from, uint8_t to, Result& out) {
 
     const uint8_t target = transposed(to);
     const uint8_t velocity = sounding_.velocity;
+
+    // Der Ton klingt bereits — ihn zu verschieben ist ein Pitch Bend, keine neue Note.
+    if (config_.slide_uses_pitch_bend) {
+        const int interval = static_cast<int>(target) - static_cast<int>(sounding_.out);
+        const int span = config_.pitch_bend_range < 1 ? 1 : static_cast<int>(config_.pitch_bend_range);
+        if (interval >= -span && interval <= span) {
+            bend_ = static_cast<int8_t>(interval);
+            // Dieselbe Stimme, dieselbe Note auf dem Kabel: nur der Griff, auf den sie
+            // hört, ändert sich — dessen Loslassen beendet den Ton.
+            for (uint8_t i = 0; i < stack_count_; ++i) {
+                if (stack_[i].channel == channel && stack_[i].source == from) {
+                    stack_[i].source = to;
+                }
+            }
+            sounding_.source = to;
+            const uint16_t value = bend_value(interval);
+            out.add(make(MessageKind::PitchBend, value & 0x7F, (value >> 7) & 0x7F));
+            return;
+        }
+    }
+
+    // Weiter, als der Synth beugen kann: ein echter Notenwechsel, vorher zurück in die
+    // Mitte — eine neu angerissene Note ist besser als eine falsche Tonhöhe.
+    centre_bend(out);
 
     // Die alte und eine etwaige gleichnamige Auflage aus dem Stapel nehmen.
     for (uint8_t i = 0; i < stack_count_;) {
@@ -312,6 +361,7 @@ bool Filter::is_fret_press(const Event& event, bool string_was_silent) const {
 void Filter::emit_note_on(uint8_t channel, uint8_t note, uint8_t velocity, Result& out) {
     const uint8_t target = transposed(note);
     if (!config_.monophonic) {
+        centre_bend(out);
         out.add(make(MessageKind::NoteOn, target, velocity));
         return;
     }
@@ -419,6 +469,7 @@ void Filter::update_voice(const HeldNote* attacked, Result& out) {
         return;
     }
     if (!has_sounding_) {
+        centre_bend(out);
         out.add(make(MessageKind::NoteOn, winner->out, winner->velocity));
         sounding_ = *winner;
         has_sounding_ = true;
@@ -432,6 +483,7 @@ void Filter::update_voice(const HeldNote* attacked, Result& out) {
                                   attacked->source == winner->source;
         if (struck_again && config_.retrigger_same_note) {
             out.add(make(MessageKind::NoteOff, sounding_.out, 0));
+            centre_bend(out);
             out.add(make(MessageKind::NoteOn, winner->out, winner->velocity));
         }
         sounding_ = *winner;
@@ -441,10 +493,12 @@ void Filter::update_voice(const HeldNote* attacked, Result& out) {
     if (config_.legato) {
         // Neue Note zuerst, damit ein Mono-Synth im Legato-Modus gleitet statt seine
         // Hüllkurve neu zu triggern.
+        centre_bend(out);
         out.add(make(MessageKind::NoteOn, winner->out, winner->velocity));
         out.add(make(MessageKind::NoteOff, sounding_.out, 0));
     } else {
         out.add(make(MessageKind::NoteOff, sounding_.out, 0));
+        centre_bend(out);
         out.add(make(MessageKind::NoteOn, winner->out, winner->velocity));
     }
     sounding_ = *winner;
