@@ -30,7 +30,8 @@ final class MIDIRouter: @unchecked Sendable {
         emit(result.out)
     }
 
-    /// Drives the delayed note-ons of blip mode.
+    /// Drives what waits on the clock: the delayed note-ons of blip mode, and the held
+    /// releases of slide mode.
     func tick() {
         lock.lock()
         let out = filter.tick(now: Timebase.now())
