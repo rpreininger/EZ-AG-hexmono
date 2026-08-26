@@ -390,3 +390,83 @@ final class MIDIEventTests: XCTestCase {
         XCTAssertEqual(NoteName.name(for: 40), "E2")
     }
 }
+
+/// Sliding the fingering on a string that is still ringing has to move the pitch of the
+/// struck note instead of dropping the fret note and ending the sound.
+final class FretSlideTests: XCTestCase {
+
+    private func slideConfig() -> FilterConfig {
+        var config = FilterConfig()
+        config.fretMode = .velocity
+        config.fretSlide = true
+        config.slideWindowMs = 6
+        return config
+    }
+
+    func testFretPressRetunesTheRingingNote() {
+        let filter = EZAGFilter(config: slideConfig())
+
+        // The open low E, struck.
+        XCTAssertEqual(filter.process(on(5, 40, 48)).out, [on(0, 40, 48)])
+
+        // A fingering change starts with the release of the ringing note …
+        let release = filter.process(off(5, 40, at: 1.0))
+        XCTAssertEqual(release.verdict, .heldForSlide)
+        XCTAssertTrue(release.out.isEmpty)
+
+        // … and the fret note half a millisecond later. New pitch, same strike: the
+        // velocity of the pluck carries over, and the new note comes before the old one
+        // is released so the synth glides.
+        let slide = filter.process(on(5, 47, 16, at: 1.0005))
+        XCTAssertEqual(slide.verdict, .slid)
+        XCTAssertEqual(slide.out, [on(0, 47, 48), off(0, 40)])
+    }
+
+    func testSlidingOnKeepsCarryingTheSameStrike() {
+        let filter = EZAGFilter(config: slideConfig())
+        _ = filter.process(on(5, 40, 48))
+        _ = filter.process(off(5, 40, at: 1.0))
+        _ = filter.process(on(5, 47, 16, at: 1.0005))
+
+        // Sliding one fret further does the same thing again, still on the first strike.
+        XCTAssertEqual(filter.process(off(5, 47, at: 2.0)).verdict, .heldForSlide)
+        XCTAssertEqual(filter.process(on(5, 49, 16, at: 2.0005)).out, [on(0, 49, 48), off(0, 47)])
+
+        // Letting go ends the note — nothing follows within the window.
+        XCTAssertEqual(filter.process(off(5, 49, at: 3.0)).verdict, .heldForSlide)
+        XCTAssertEqual(filter.tick(now: 3.001), [])
+        XCTAssertEqual(filter.tick(now: 3.01), [off(0, 49)])
+        XCTAssertFalse(filter.hasPendingNotes)
+    }
+
+    func testHeldReleaseIsHandedOnWhenAPluckFollowsInstead() {
+        let filter = EZAGFilter(config: slideConfig())
+        _ = filter.process(on(5, 47, 92))
+
+        XCTAssertEqual(filter.process(off(5, 47, at: 1.0)).verdict, .heldForSlide)
+        // Full velocity: the string was struck again, not fingered. The held release goes
+        // out first, then the new strike — exactly what it looked like before slide mode.
+        let pluck = filter.process(on(5, 47, 96, at: 1.0005))
+        XCTAssertEqual(pluck.verdict, .passed)
+        XCTAssertEqual(pluck.out, [off(0, 47), on(0, 47, 96)])
+    }
+
+    func testAFretPressOnASilentStringIsStillJustAFretPress() {
+        let filter = EZAGFilter(config: slideConfig())
+        // Nothing ringing anywhere: no release to hold, so the fret note is dropped as
+        // before and its own release goes with it.
+        XCTAssertEqual(filter.process(on(5, 47, 16)).verdict, .suppressedFret)
+        XCTAssertEqual(filter.process(off(5, 47, at: 1.0)).verdict, .swallowedNoteOff)
+    }
+
+    func testSlideModeOffKeepsTheOldBehaviour() {
+        var config = slideConfig()
+        config.fretSlide = false
+        let filter = EZAGFilter(config: config)
+
+        XCTAssertEqual(filter.process(on(5, 40, 48)).out, [on(0, 40, 48)])
+        // The release goes straight out, the fret note is dropped: the sound stops.
+        XCTAssertEqual(filter.process(off(5, 40, at: 1.0)).out, [off(0, 40)])
+        XCTAssertEqual(filter.process(on(5, 47, 16, at: 1.0005)).verdict, .suppressedFret)
+    }
+}

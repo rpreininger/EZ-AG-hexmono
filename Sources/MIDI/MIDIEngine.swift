@@ -185,9 +185,10 @@ final class MIDIEngine: ObservableObject {
         router.log.exportText()
     }
 
-    /// Blip mode is the only mode that needs a clock; keep it off otherwise.
+    /// Blip mode and slide mode need a clock — one to time out held `Note On`s, the other
+    /// to hand on the releases no fret note claimed. Keep it off otherwise.
     private func updateTicker() {
-        let needed = config.fretMode == .blip
+        let needed = config.fretMode == .blip || config.fretSlide
         if needed, ticker == nil {
             let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "MidiFilter.tick",
                                                                            qos: .userInteractive))

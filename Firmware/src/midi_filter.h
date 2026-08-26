@@ -32,6 +32,10 @@ enum class Verdict : uint8_t {
     SwallowedNoteOff,
     FilteredChannel,
     DroppedOther,
+    /// Note Off der klingenden Note zurückgehalten — es könnte ein Griffwechsel folgen.
+    HeldForSlide,
+    /// Griffwechsel auf klingender Saite: die Tonhöhe ist gewandert.
+    Slid,
 };
 
 struct Config {
@@ -51,6 +55,16 @@ struct Config {
     bool velocity_exact_match = false;
     uint32_t retrigger_window_us = 60000;
     bool allow_first_note_on_idle_string = true;
+
+    /// Ein Griffwechsel auf einer noch klingenden Saite verstimmt die Note, statt die
+    /// Bund-Note zu verwerfen — das Rutschen auf dem Bund ändert die Tonhöhe, wie an
+    /// einer echten Saite. Die Velocity des Anschlags bleibt erhalten, es klingt ja
+    /// weiterhin derselbe Anschlag. Braucht eine arbeitende Bund-Erkennung.
+    bool fret_slide = false;
+    /// So lange wird das Note Off einer klingenden Note zurückgehalten, um zu sehen, ob
+    /// eine Bund-Note folgt. Die EZ-AG schickt das Paar rund eine halbe Millisekunde
+    /// auseinander; genau so viel Nachklang kostet es bei einem echten Loslassen.
+    uint32_t slide_window_us = 6000;
 
     bool suppress_hammer_ons = true;
     uint32_t hammer_on_window_us = 20000;
@@ -88,6 +102,11 @@ public:
 
     Result process(const Event& event);
 
+    /// Treibt das Zurückhalten der Note Offs im Rutsch-Modus. Muss in der Hauptschleife
+    /// laufen, solange `fret_slide` an ist; liefert die Loslass-Ereignisse, die keine
+    /// Bund-Note für sich beansprucht hat.
+    Result tick(uint32_t now_us);
+
     /// Alles aus, Zustand zurücksetzen.
     Result panic();
 
@@ -111,6 +130,11 @@ private:
 
         bool legato_guard = false;
         uint32_t legato_guard_until_us = 0;
+
+        // Rutsch-Modus: das zurückgehaltene Note Off der klingenden Note.
+        bool has_pending_off = false;
+        uint8_t pending_off_note = 0;
+        uint32_t pending_off_until_us = 0;
     };
 
     struct HeldNote {
@@ -123,6 +147,8 @@ private:
     Result note_on(const Event& event);
     Result note_off(const Event& event);
     bool is_fret_press(const Event& event, bool string_was_silent) const;
+    bool can_detect_fret_press() const;
+    void slide(uint8_t channel, uint8_t from, uint8_t to, Result& out);
 
     void emit_note_on(uint8_t channel, uint8_t note, uint8_t velocity, Result& out);
     void emit_note_off(uint8_t channel, uint8_t note, Result& out);

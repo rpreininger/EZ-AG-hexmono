@@ -114,6 +114,43 @@ Werden Hammer-Ons unterdrückt, muss das `Note Off` der ersetzten Note **mit**
 verworfen werden — sonst verstummt der Synth beim Griffwechsel, statt die angeschlagene
 Note weiterzuführen. Das letzte Loslassen muss dagegen durchkommen, sonst hängt die Note.
 
+## Rutschen auf dem Bund
+
+Ist die Saite angeschlagen und du rutschst mit dem Griff weiter, soll die Tonhöhe
+mitwandern, statt dass der Ton endet. Dafür ist **„Griffwechsel ändert die Tonhöhe"**
+da (`fretSlide`, in der Voreinstellung „EZ-AG → Mono-Synth" an).
+
+Der Grund, warum das nicht von allein passiert: ein Griffwechsel sieht am MIDI-Kabel
+genauso aus wie ein Loslassen mit anschliessendem Anschlag — erst das `Note Off` der
+klingenden Note, dann ein `Note On`. Was folgt, weiss man erst eine halbe Millisekunde
+später. Der Filter hält deshalb das `Note Off` einer klingenden Note kurz zurück:
+
+```
+0.000  ch6  Note Off  E2 (40)          → zurückgehalten
+0.001  ch6  Note On   B2 (47)  v16     → Bund-Note: es war ein Griffwechsel
+       out  Note On   B2 (47)  v48     → neue Tonhöhe, Velocity des Anschlags
+       out  Note Off  E2 (40)          → erst danach die alte Note los
+```
+
+Drei Dinge fallen dabei zusammen:
+
+- **Die Velocity des Anschlags bleibt.** Es klingt weiterhin derselbe Anschlag, nur auf
+  einer anderen Tonhöhe — nicht die 16 der Bund-Taste.
+- **Die neue Note kommt vor dem Loslassen der alten.** Ein Mono-Synth gleitet dadurch,
+  statt seine Hüllkurve neu anzureissen.
+- **Kommt statt der Bund-Note ein Anschlag**, geht das zurückgehaltene `Note Off` voraus
+  und alles läuft wie bisher. Kommt gar nichts, wird es nach dem Fenster nachgereicht —
+  ein echtes Loslassen klingt also `slideWindowMs` (6 ms) länger nach. Mehr kostet der
+  Modus nicht.
+
+**Noch nicht am Instrument geprüft:** dass ein Rutschen wirklich als Bund-Note
+ankommt. Gemessen ist nur, dass *Greifen* auf einer klingenden Saite `Note Off` + `Note
+On v16` erzeugt (2026-08-20) — dass ein Weiterrutschen dieselbe Form hat, ist daraus
+geschlossen, nicht gemessen. Rührt sich nichts, kündigt die EZ-AG das Rutschen
+wahrscheinlich als Hammer-On/Pull-Off mit `CC 84` an; dann ist der Schalter
+**„Hammer-On und Pull-Off unterdrücken"** der richtige Hebel — aus, und der Griffwechsel
+erklingt mit seiner eigenen Velocity.
+
 ## Vorgehen bei einem anderen Instrument
 
 1. Instrument und Synth in der App ankreuzen.
@@ -124,11 +161,12 @@ Note weiterzuführen. Das letzte Loslassen muss dagegen durchkommen, sonst häng
    Auslöser, **Kanal** zeigt die Zuordnung.
 
 Der Monitor markiert in der Spalte „Filter", warum eine Nachricht verworfen wurde —
-`Bund`, `Hammer-On`, `Off verworfen`, `Kanal`.
+`Bund`, `Hammer-On`, `Off verworfen`, `Kanal` — und `Rutsch` für einen Griffwechsel, der
+die Tonhöhe verschoben hat.
 
 ## Stand
 
-- Filterlogik: 31 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
+- Filterlogik: 36 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
 - Ende-zu-Ende über echtes CoreMIDI geprüft, Latenz 0,1–0,4 ms
 - An der echten EZ-AG eingestellt und gespielt
 - Offen: iOS-Build

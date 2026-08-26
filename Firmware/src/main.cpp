@@ -223,6 +223,11 @@ midifilter::Config ezag_config() {
     config.fret_mode = midifilter::FretMode::Velocity;
     config.velocity_threshold = 16;
 
+    // Rutschen auf dem Bund: ein Griffwechsel auf einer noch klingenden Saite lässt die
+    // Tonhöhe wandern, statt die Bund-Note wegzuwerfen und den Ton zu beenden. Kostet
+    // beim echten Loslassen `slide_window_us` Nachklang, sonst nichts.
+    config.fret_slide = true;
+
     // Hammer-On und Pull-Off werden mit CC 84 angekündigt.
     config.suppress_hammer_ons = true;
     return config;
@@ -286,6 +291,10 @@ void loop() {
         trace("IN ", event);
         send(g_filter.process(event));
     }
+
+    // Reicht die Note Offs nach, die der Rutsch-Modus zurückgehalten hat und die keine
+    // Bund-Note für sich beansprucht hat. Ohne `fret_slide` kehrt das sofort zurück.
+    send(g_filter.tick(micros()));
 
     if (g_led_off_at_ms != 0 && static_cast<int32_t>(millis() - g_led_off_at_ms) >= 0) {
         neopixelWrite(kActivityLedPin, 0, 0, 0);

@@ -129,6 +129,82 @@ void test_monophonic() {
     CHECK(result.count == 2 && is_note_on(result, 1, 0, 60, 90));
 }
 
+// MARK: - Rutschen auf dem Bund
+
+void test_fret_slide() {
+    begin("Griffwechsel auf klingender Saite verstimmt den Anschlag");
+    Config config;
+    config.fret_slide = true;
+    Filter filter(config);
+
+    // Leere tiefe E-Saite, angeschlagen mit Velocity 48.
+    Result result = filter.process(note_on(5, 40, 48, 0));
+    CHECK(result.count == 1 && is_note_on(result, 0, 0, 40, 48));
+
+    // Der Griffwechsel beginnt mit dem Note Off der klingenden Note — zurückhalten.
+    result = filter.process(note_off(5, 40, 1000000));
+    CHECK(result.verdict == Verdict::HeldForSlide);
+    CHECK(result.count == 0);
+
+    // Die Bund-Note eine halbe Millisekunde später: neue Tonhöhe, gleiche Velocity, und
+    // die neue Note kommt vor dem Loslassen der alten, damit der Synth gleitet.
+    result = filter.process(note_on(5, 47, 16, 1000500));
+    CHECK(result.verdict == Verdict::Slid);
+    CHECK(result.count == 2);
+    CHECK(is_note_on(result, 0, 0, 47, 48));
+    CHECK(is_note_off(result, 1, 0, 40));
+
+    // Weiterrutschen trägt denselben Anschlag weiter.
+    result = filter.process(note_off(5, 47, 2000000));
+    CHECK(result.verdict == Verdict::HeldForSlide);
+    result = filter.process(note_on(5, 49, 16, 2000500));
+    CHECK(result.count == 2 && is_note_on(result, 0, 0, 49, 48) && is_note_off(result, 1, 0, 47));
+}
+
+void test_fret_slide_release_and_pluck() {
+    begin("Ohne folgende Bund-Note wird das Loslassen nachgereicht");
+    Config config;
+    config.fret_slide = true;
+    Filter filter(config);
+    filter.process(note_on(5, 40, 48, 0));
+
+    Result result = filter.process(note_off(5, 40, 1000000));
+    CHECK(result.verdict == Verdict::HeldForSlide);
+
+    // Innerhalb des Fensters passiert nichts …
+    result = filter.tick(1003000);
+    CHECK(result.count == 0);
+    // … danach kommt das Loslassen heraus und der Ton endet.
+    result = filter.tick(1010000);
+    CHECK(result.count == 1 && is_note_off(result, 0, 0, 40));
+    // Und bleibt heraussen: kein zweites Mal.
+    result = filter.tick(1020000);
+    CHECK(result.count == 0);
+
+    begin("Folgt ein Anschlag statt eines Griffwechsels, geht das Loslassen voraus");
+    Filter second(config);
+    second.process(note_on(5, 47, 92, 0));
+    result = second.process(note_off(5, 47, 1000000));
+    CHECK(result.verdict == Verdict::HeldForSlide);
+    result = second.process(note_on(5, 47, 96, 1000500));
+    CHECK(result.verdict == Verdict::Passed);
+    CHECK(result.count == 2 && is_note_off(result, 0, 0, 47) && is_note_on(result, 1, 0, 47, 96));
+}
+
+void test_fret_slide_off_keeps_old_behaviour() {
+    begin("Ohne Rutsch-Modus beendet der Griff den Ton wie bisher");
+    Config config;  // fret_slide ist voreingestellt aus
+    Filter filter(config);
+
+    Result result = filter.process(note_on(5, 40, 48, 0));
+    CHECK(result.count == 1 && is_note_on(result, 0, 0, 40, 48));
+    result = filter.process(note_off(5, 40, 1000000));
+    CHECK(result.count == 1 && is_note_off(result, 0, 0, 40));
+    result = filter.process(note_on(5, 47, 16, 1000500));
+    CHECK(result.verdict == Verdict::SuppressedFret);
+    CHECK(result.count == 0);
+}
+
 // MARK: - Am Instrument gemessene Sequenzen
 
 void test_measured_fret_and_pluck() {
@@ -353,6 +429,9 @@ int main() {
     test_measured_fret_and_pluck();
     test_measured_hammer_on();
     test_quiet_pluck_survives_default_threshold();
+    test_fret_slide();
+    test_fret_slide_release_and_pluck();
+    test_fret_slide_off_keeps_old_behaviour();
     test_hammer_on_pass_through();
     test_timer_wraparound();
     test_parser_running_status();

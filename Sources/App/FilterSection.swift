@@ -109,6 +109,25 @@ struct FilterSection: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Divider()
+
+            Toggle("Griffwechsel ändert die Tonhöhe (Rutschen)", isOn: config.fretSlide)
+                .disabled(engine.config.fretMode == .off || engine.config.fretMode == .blip)
+            Text("Rutschst du auf dem Bund weiter, während die Saite noch klingt, wandert die Tonhöhe mit — statt dass die Bund-Note verworfen wird und der Ton endet. Die Velocity des Anschlags bleibt erhalten. Dafür wird das Note Off einer klingenden Note um \(Int(engine.config.slideWindowMs)) ms zurückgehalten, um den Griffwechsel vom Loslassen zu unterscheiden.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if engine.config.fretSlide {
+                Slider(value: config.slideWindowMs, in: 2...40, step: 1) {
+                    Text("Fenster")
+                } minimumValueLabel: {
+                    Text("2 ms").font(.caption2)
+                } maximumValueLabel: {
+                    Text("40 ms").font(.caption2)
+                }
+            }
+
             switch engine.config.fretMode {
             case .off:
                 EmptyView()
@@ -181,6 +200,7 @@ extension FilterConfig {
         config.fretMode = .velocity
         config.velocityThreshold = 16
         config.velocityExactMatch = false
+        config.fretSlide = true
         return config
     }
 }

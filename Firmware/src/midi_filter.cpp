@@ -131,6 +131,10 @@ Result Filter::note_on(const Event& event) {
     if (config_.suppress_hammer_ons && string.has_portamento &&
         within(event.time_us, string.portamento_us, config_.hammer_on_window_us)) {
         string.has_portamento = false;
+        // Ein für einen möglichen Rutsch zurückgehaltenes Note Off gehört zu der Note,
+        // die dieser Hammer-On ersetzt. Es hier fallen zu lassen ist genau das, was den
+        // angeschlagenen Ton weiterklingen lässt.
+        string.has_pending_off = false;
         // Gleich darauf beendet das Instrument die Note, die diese hier ersetzt. Auch
         // dieses Note Off muss weg, sonst verstummt der Synth beim Griffwechsel.
         string.legato_guard = true;
@@ -144,6 +148,22 @@ Result Filter::note_on(const Event& event) {
             bit_set(string.suppressed, note);
         }
         out.verdict = Verdict::SuppressedHammerOn;
+        return out;
+    }
+
+    if (string.has_pending_off) {
+        const uint8_t released = string.pending_off_note;
+        string.has_pending_off = false;
+        if (is_fret_press(event, string_was_silent)) {
+            // Die Saite hat nie aufgehört zu klingen — es hat sich nur der Griff bewegt.
+            slide(event.channel, released, note, out);
+            out.verdict = Verdict::Slid;
+            return out;
+        }
+        // Doch kein Griffwechsel: die Note war wirklich zu Ende und das hier ist der
+        // nächste Anschlag. Erst das zurückgehaltene Loslassen heraus, dann der Anschlag.
+        emit_note_off(event.channel, released, out);
+        emit_note_on(event.channel, note, event.data2, out);
         return out;
     }
 
@@ -182,8 +202,90 @@ Result Filter::note_off(const Event& event) {
         return out;
     }
 
+    // Rutsch-Modus: ein Griffwechsel beginnt mit dem Note Off der klingenden Note, die
+    // Bund-Note folgt eine halbe Millisekunde später. Das Note Off gerade so lange
+    // zurückhalten, dass sich die beiden Fälle unterscheiden lassen.
+    if (config_.fret_slide && config_.monophonic && can_detect_fret_press() &&
+        !string.has_pending_off && has_sounding_ && sounding_.channel == event.channel &&
+        sounding_.source == note) {
+        string.has_pending_off = true;
+        string.pending_off_note = note;
+        string.pending_off_until_us = event.time_us + config_.slide_window_us;
+        out.verdict = Verdict::HeldForSlide;
+        return out;
+    }
+
     emit_note_off(event.channel, note, out);
     return out;
+}
+
+Result Filter::tick(uint32_t now_us) {
+    Result out;
+    if (!config_.fret_slide) {
+        return out;
+    }
+    for (uint8_t channel = 0; channel < kChannels; ++channel) {
+        StringState& string = strings_[channel];
+        if (!string.has_pending_off) continue;
+        // Vorzeichenbehaftete Differenz: auch über den Überlauf von micros() hinweg richtig.
+        if (static_cast<int32_t>(now_us - string.pending_off_until_us) < 0) continue;
+        // Es kam nichts nach — es war wirklich ein Loslassen, nur ein paar
+        // Millisekunden verspätet.
+        string.has_pending_off = false;
+        emit_note_off(channel, string.pending_off_note, out);
+    }
+    return out;
+}
+
+/// Rutschen braucht eine Bund-Erkennung, die überhaupt antworten kann — sonst würde
+/// jedes zurückgehaltene Note Off nur verspätet weitergereicht.
+bool Filter::can_detect_fret_press() const {
+    return config_.fret_mode == FretMode::Velocity || config_.fret_mode == FretMode::Retrigger;
+}
+
+/// Griffwechsel auf klingender Saite: die Tonhöhe wandert, die Velocity des Anschlags
+/// bleibt, die Hüllkurve wird nicht neu angerissen.
+void Filter::slide(uint8_t channel, uint8_t from, uint8_t to, Result& out) {
+    if (!has_sounding_ || sounding_.channel != channel || sounding_.source != from) {
+        // Die Stimme ist inzwischen auf eine andere Saite gewandert — hier klingt nichts,
+        // was sich verstimmen liesse, also bleibt die Bund-Note eine Bund-Note.
+        bit_set(strings_[channel].suppressed, to);
+        return;
+    }
+
+    const uint8_t target = transposed(to);
+    const uint8_t velocity = sounding_.velocity;
+
+    // Die alte und eine etwaige gleichnamige Auflage aus dem Stapel nehmen.
+    for (uint8_t i = 0; i < stack_count_;) {
+        if (stack_[i].channel == channel && (stack_[i].source == from || stack_[i].source == to)) {
+            for (uint8_t j = i; j + 1 < stack_count_; ++j) {
+                stack_[j] = stack_[j + 1];
+            }
+            --stack_count_;
+        } else {
+            ++i;
+        }
+    }
+
+    HeldNote slid;
+    slid.channel = channel;
+    slid.source = to;
+    slid.out = target;
+    slid.velocity = velocity;
+    if (stack_count_ < kStackSize) {
+        stack_[stack_count_++] = slid;
+    }
+
+    const uint8_t previous = sounding_.out;
+    sounding_ = slid;
+    if (target == previous) {
+        return;
+    }
+    // Neue Note zuerst, dann die alte loslassen: so gleitet ein Mono-Synth, statt seine
+    // Hüllkurve neu zu triggern — und genau darum geht es beim Rutschen.
+    out.add(make(MessageKind::NoteOn, target, velocity));
+    out.add(make(MessageKind::NoteOff, previous, 0));
 }
 
 bool Filter::is_fret_press(const Event& event, bool string_was_silent) const {

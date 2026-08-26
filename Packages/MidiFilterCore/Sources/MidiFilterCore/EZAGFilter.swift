@@ -15,6 +15,11 @@ public enum Verdict: String, Sendable {
     case filteredChannel
     /// `Note On` held back, waiting to see whether its `Note Off` arrives (blip mode).
     case heldForBlip
+    /// `Note Off` of a sounding note held back, waiting to see whether a fret note
+    /// follows and turns it into a fingering change (slide mode).
+    case heldForSlide
+    /// A fret change that retuned the ringing note instead of being dropped.
+    case slid
     /// A held `Note On` and its `Note Off` cancelled each other out (blip mode).
     case droppedBlipPair
     /// Non-note message dropped because pass-through is off.
@@ -24,6 +29,8 @@ public enum Verdict: String, Sendable {
         switch self {
         case .passed: return false
         case .heldForBlip: return false
+        case .heldForSlide: return false
+        case .slid: return false
         default: return true
         }
     }
@@ -36,6 +43,8 @@ public enum Verdict: String, Sendable {
         case .swallowedNoteOff: return "Off verworfen"
         case .filteredChannel: return "Kanal"
         case .heldForBlip: return "wartet"
+        case .heldForSlide: return "wartet"
+        case .slid: return "Rutsch"
         case .droppedBlipPair: return "kurz"
         case .droppedOther: return "andere"
         }
@@ -65,6 +74,11 @@ public final class EZAGFilter {
         var deadline: Double
     }
 
+    private struct PendingOff {
+        var note: UInt8
+        var deadline: Double
+    }
+
     private struct StringState {
         /// Notes whose `Note On` was dropped — their `Note Off` has to go as well.
         var suppressed: Set<UInt8> = []
@@ -74,6 +88,9 @@ public final class EZAGFilter {
         var lastNoteOff: [UInt8: Double] = [:]
         /// Blip mode: `Note On` waiting for its verdict.
         var pending: [UInt8: PendingNote] = [:]
+        /// Slide mode: the release of the sounding note, held back for a breath to see
+        /// whether a fret note follows and makes it a fingering change.
+        var pendingOff: PendingOff?
         /// When `CC 84` last announced a hammer-on or pull-off on this string.
         var lastPortamento: Double?
         /// A suppressed hammer-on is followed by the `Note Off` of the note it replaced.
@@ -175,26 +192,37 @@ public final class EZAGFilter {
         return Result([copy], .passed)
     }
 
-    /// Drives blip mode. Call regularly (a few milliseconds) while `fretMode == .blip`;
-    /// returns the `Note On`s that have outlived the window and count as real plucks.
+    /// Drives the two modes that need a clock. Call regularly (a few milliseconds) while
+    /// `fretMode == .blip` or `fretSlide` is on; returns the `Note On`s that have outlived
+    /// the blip window and count as real plucks, plus the releases no fret note claimed.
     public func tick(now: Double) -> [MIDIEvent] {
-        guard config.fretMode == .blip else { return [] }
         var out: [MIDIEvent] = []
-        for channel in strings.indices {
-            guard !strings[channel].pending.isEmpty else { continue }
-            for (note, pending) in strings[channel].pending where pending.deadline <= now {
-                strings[channel].pending.removeValue(forKey: note)
-                guard case let .noteOn(_, velocity) = pending.event.message else { continue }
-                out += emitNoteOn(channel: UInt8(channel), note: note, velocity: velocity)
+        if config.fretMode == .blip {
+            for channel in strings.indices {
+                guard !strings[channel].pending.isEmpty else { continue }
+                for (note, pending) in strings[channel].pending where pending.deadline <= now {
+                    strings[channel].pending.removeValue(forKey: note)
+                    guard case let .noteOn(_, velocity) = pending.event.message else { continue }
+                    out += emitNoteOn(channel: UInt8(channel), note: note, velocity: velocity)
+                }
+            }
+        }
+        if config.fretSlide {
+            for channel in strings.indices {
+                guard let pendingOff = strings[channel].pendingOff,
+                      pendingOff.deadline <= now else { continue }
+                // Nothing followed — it really was a release, only a few milliseconds late.
+                strings[channel].pendingOff = nil
+                out += emitNoteOff(channel: UInt8(channel), note: pendingOff.note)
             }
         }
         return out
     }
 
-    /// True while a `Note On` is waiting for its blip verdict, so the engine knows it has
-    /// to keep ticking.
+    /// True while something is waiting on the clock — a blip verdict or a held release —
+    /// so the engine knows it has to keep ticking.
     public var hasPendingNotes: Bool {
-        strings.contains { !$0.pending.isEmpty }
+        strings.contains { !$0.pending.isEmpty || $0.pendingOff != nil }
     }
 
     // MARK: Note handling
@@ -207,6 +235,9 @@ public final class EZAGFilter {
         if let announced = strings[channel].lastPortamento, config.suppressHammerOns,
            (event.time - announced) * 1000 <= config.hammerOnWindowMs {
             strings[channel].lastPortamento = nil
+            // A release held back for a possible slide belongs to the note this hammer-on
+            // replaces. Dropping it here is what keeps the struck note ringing.
+            strings[channel].pendingOff = nil
             // The instrument releases the note this one replaces a moment later; swallow
             // that release too, so the struck note plays on through the fingering change.
             strings[channel].legatoGuardUntil = event.time + config.hammerOnWindowMs / 1000
@@ -218,6 +249,20 @@ public final class EZAGFilter {
                 strings[channel].suppressed.insert(note)
             }
             return Result([], .suppressedHammerOn)
+        }
+
+        if let pendingOff = strings[channel].pendingOff {
+            strings[channel].pendingOff = nil
+            if isFretPress(note: note, velocity: velocity, event: event,
+                           stringWasSilent: stringWasSilent) {
+                // The string never stopped ringing — the player only moved the fingering.
+                return Result(slide(channel: event.channel, from: pendingOff.note, to: note), .slid)
+            }
+            // Not a fingering change after all: the note really ended and this is the next
+            // pluck. Let the held release out first, then treat the pluck as usual.
+            var out = emitNoteOff(channel: event.channel, note: pendingOff.note)
+            out += emitNoteOn(channel: event.channel, note: note, velocity: velocity)
+            return Result(out, .passed)
         }
 
         if isFretPress(note: note, velocity: velocity, event: event, stringWasSilent: stringWasSilent) {
@@ -252,7 +297,52 @@ public final class EZAGFilter {
             strings[channel].legatoGuardUntil = nil
             return Result([], .swallowedNoteOff)
         }
+
+        // Slide mode: a fingering change starts with the release of the note that is
+        // ringing, and the fret note follows half a millisecond later. Hold the release
+        // just long enough to tell the two apart.
+        if config.fretSlide, config.monophonic, canDetectFretPress,
+           let current = sounding, current.channel == event.channel, current.source == note,
+           strings[channel].pendingOff == nil {
+            strings[channel].pendingOff = PendingOff(note: note,
+                                                     deadline: event.time + config.slideWindowMs / 1000)
+            return Result([], .heldForSlide)
+        }
+
         return Result(emitNoteOff(channel: event.channel, note: note), .passed)
+    }
+
+    /// Sliding needs the fret detection to be able to answer at all — without it every
+    /// held release would simply be handed on late.
+    private var canDetectFretPress: Bool {
+        config.fretMode == .velocity || config.fretMode == .retrigger
+    }
+
+    /// A fingering change on a ringing string: the pitch moves, the strike keeps its
+    /// velocity, and the envelope is not retriggered.
+    private func slide(channel: UInt8, from old: UInt8, to new: UInt8) -> [MIDIEvent] {
+        guard let current = sounding, current.channel == channel, current.source == old else {
+            // The voice moved to another string while the release was held — there is
+            // nothing ringing here to retune, so the fret note stays a fret note.
+            strings[Int(channel)].suppressed.insert(new)
+            return []
+        }
+
+        let target = transposed(new)
+        stack.removeAll { $0.channel == channel && ($0.source == old || $0.source == new) }
+        // The pluck's velocity carries over: it is still that strike sounding, only at a
+        // different pitch.
+        let slid = HeldNote(channel: channel, source: new, out: target, velocity: current.velocity)
+        stack.append(slid)
+        sounding = slid
+
+        guard target != current.out else { return [] }
+        // New note first, then release the old one, so a mono synth glides instead of
+        // retriggering its envelope — which is the whole point of a slide.
+        return [MIDIEvent(channel: config.outputChannel,
+                          message: .noteOn(note: target, velocity: current.velocity)),
+                MIDIEvent(channel: config.outputChannel,
+                          message: .noteOff(note: current.out, velocity: 0))]
     }
 
     private func isFretPress(note: UInt8, velocity: UInt8, event: MIDIEvent, stringWasSilent: Bool) -> Bool {

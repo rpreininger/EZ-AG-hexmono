@@ -102,6 +102,20 @@ public struct FilterConfig: Codable, Equatable, Sendable {
     public var allowFirstNoteOnIdleString = true
     public var blipMaxMs: Double = 40
 
+    /// A fret change on a string whose struck note is still ringing retunes that note
+    /// instead of being thrown away — sliding the fingering moves the pitch, the way it
+    /// does on a real string. The velocity of the original pluck carries over, because
+    /// it is still that strike sounding.
+    ///
+    /// Needs the fret detection to be on (`velocity` or `retrigger`), since that is what
+    /// tells a fingering change apart from the next pluck.
+    public var fretSlide = false
+    /// How long the release of a sounding note is held back to see whether a fret note
+    /// follows. The EZ-AG sends the pair about half a millisecond apart; the window only
+    /// has to be wide enough to cover that, and it costs exactly this much extra ring
+    /// time on a genuine release.
+    public var slideWindowMs: Double = 6
+
     /// Hammer-ons and pull-offs arrive at full velocity, so the velocity rule cannot see
     /// them. The EZ-AG announces each one with `CC 84` (portamento control) about a
     /// millisecond ahead, which identifies them exactly.
@@ -151,6 +165,8 @@ public extension FilterConfig {
         config.retriggerWindowMs = decode(.retriggerWindowMs, config.retriggerWindowMs)
         config.allowFirstNoteOnIdleString = decode(.allowFirstNoteOnIdleString, config.allowFirstNoteOnIdleString)
         config.blipMaxMs = decode(.blipMaxMs, config.blipMaxMs)
+        config.fretSlide = decode(.fretSlide, config.fretSlide)
+        config.slideWindowMs = decode(.slideWindowMs, config.slideWindowMs)
         config.suppressHammerOns = decode(.suppressHammerOns, config.suppressHammerOns)
         config.hammerOnWindowMs = decode(.hammerOnWindowMs, config.hammerOnWindowMs)
         config.transpose = decode(.transpose, config.transpose)
