@@ -161,6 +161,24 @@ void test_measured_fret_and_pluck() {
     CHECK(result.count == 1 && is_note_off(result, 0, 0, 47));
 }
 
+void test_quiet_pluck_survives_default_threshold() {
+    begin("Gemessen 2026-08-25: leiser Anschlag mit Velocity 23 kommt durch");
+    // Voreinstellung unverändert benutzen — genau diese Schwelle läuft auf der Box.
+    Filter filter{Config()};
+
+    // Die Bund-Note liegt immer bei exakt 16 und verschwindet.
+    Result result = filter.process(note_on(5, 47, 16, 0));
+    CHECK(result.verdict == Verdict::SuppressedFret);
+    CHECK(result.count == 0);
+    result = filter.process(note_off(5, 47, 1000000));
+    CHECK(result.verdict == Verdict::SwallowedNoteOff);
+
+    // Der leiseste gemessene Anschlag darf nicht mit herausfallen.
+    result = filter.process(note_on(5, 47, 23, 1000500));
+    CHECK(result.verdict == Verdict::Passed);
+    CHECK(result.count == 1 && is_note_on(result, 0, 0, 47, 23));
+}
+
 void test_measured_hammer_on() {
     begin("Gemessen 2026-08-20: Hammer-On und Pull-Off");
     Config config;
@@ -327,6 +345,7 @@ int main() {
     test_monophonic();
     test_measured_fret_and_pluck();
     test_measured_hammer_on();
+    test_quiet_pluck_survives_default_threshold();
     test_hammer_on_pass_through();
     test_timer_wraparound();
     test_parser_running_status();

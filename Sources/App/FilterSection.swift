@@ -165,8 +165,10 @@ extension FilterConfig {
     ///
     /// Measured: string N sends on channel N. A fret press and a pluck are structurally
     /// identical — both arrive as `Note Off` followed by `Note On` about half a
-    /// millisecond later — so only the velocity tells them apart. Fret notes came in at
-    /// exactly 16, plucks between 48 and 95.
+    /// millisecond later — so only the velocity tells them apart. Fret notes come in at
+    /// exactly 16 every time. Plucks looked like 48 to 95 on the first session, but on
+    /// 2026-08-25 quiet ones reached down to 23 — hence the threshold at 20, the same
+    /// value the firmware runs.
     static var ezagMono: FilterConfig {
         var config = FilterConfig()
         config.lowestInputChannel = 0
@@ -177,7 +179,7 @@ extension FilterConfig {
         config.fallbackToHeldNote = false
         config.legato = false
         config.fretMode = .velocity
-        config.velocityThreshold = 32
+        config.velocityThreshold = 20
         config.velocityExactMatch = false
         return config
     }

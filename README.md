@@ -89,8 +89,10 @@ angeschlagen, gegriffen oder losgelassen wird.
 Bund-Druck und Anschlag sind **strukturell nicht zu unterscheiden** — beide sind ein
 `Note Off` gefolgt von einem `Note On` nach etwa einer halben Millisekunde. Eine
 Retrigger-Erkennung kann hier nichts ausrichten. Der einzige Unterschied ist die
-Velocity: **Bund immer exakt 16**, Anschläge zwischen 48 und 96. Die Schwelle liegt
-deshalb bei 32.
+Velocity: **Bund immer exakt 16**, Anschläge am 2026-08-20 zwischen 48 und 96. Am
+2026-08-25 an der laufenden Box nachgemessen reichen leise Anschläge bis auf 23 herunter
+— die Schwelle liegt deshalb bei **20**, sauber in der Lücke zwischen 16 und 23. App und
+Firmware benutzen denselben Wert.
 
 **Hammer-On und Pull-Off** kommen dagegen mit voller Velocity und sind über die
 Velocity nicht greifbar. Die EZ-AG kündigt sie aber jeweils rund eine Millisekunde
@@ -121,7 +123,7 @@ Der Monitor markiert in der Spalte „Filter", warum eine Nachricht verworfen wu
 
 ## Stand
 
-- Filterlogik: 30 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
+- Filterlogik: 31 Unit-Tests, alle grün, darunter zwei real gemessene Sequenzen
 - Ende-zu-Ende über echtes CoreMIDI geprüft, Latenz 0,1–0,4 ms
 - An der echten EZ-AG eingestellt und gespielt
 - Offen: iOS-Build

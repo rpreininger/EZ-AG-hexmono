@@ -47,7 +47,7 @@ struct Config {
     bool fallback_to_held_note = false;
 
     FretMode fret_mode = FretMode::Velocity;
-    uint8_t velocity_threshold = 32;
+    uint8_t velocity_threshold = 20;
     bool velocity_exact_match = false;
     uint32_t retrigger_window_us = 60000;
     bool allow_first_note_on_idle_string = true;

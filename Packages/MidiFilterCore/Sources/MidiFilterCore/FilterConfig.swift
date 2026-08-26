@@ -88,7 +88,9 @@ public struct FilterConfig: Codable, Equatable, Sendable {
 
     // Fret suppression
     public var fretMode: FretMode = .off
-    public var velocityThreshold: UInt8 = 40
+    /// Fret notes always arrive at exactly 16. Measured against the running box on
+    /// 2026-08-25, quiet plucks reach down to 23 — 20 sits in the gap between the two.
+    public var velocityThreshold: UInt8 = 20
     /// Match the threshold exactly instead of "at or below".
     public var velocityExactMatch = false
     public var retriggerWindowMs: Double = 60

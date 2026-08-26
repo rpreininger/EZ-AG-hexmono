@@ -174,6 +174,21 @@ final class FretSuppressionTests: XCTestCase {
         XCTAssertEqual(filter.process(on(0, 60, 110)).out, [on(0, 60, 110)])
     }
 
+    /// Measured on 2026-08-25: quiet plucks reach down to velocity 23, so the shipping
+    /// threshold has to sit below that and still catch the fret note at 16.
+    func testQuietPluckSurvivesTheDefaultThreshold() {
+        var config = FilterConfig()
+        config.fretMode = .velocity
+        let filter = EZAGFilter(config: config)
+
+        XCTAssertEqual(filter.process(on(0, 47, 16)).verdict, .suppressedFret)
+        XCTAssertEqual(filter.process(off(0, 47, at: 1.0)).verdict, .swallowedNoteOff)
+
+        let quiet = filter.process(on(0, 47, 23, at: 1.001))
+        XCTAssertEqual(quiet.verdict, .passed)
+        XCTAssertEqual(quiet.out, [on(0, 47, 23)])
+    }
+
     /// The sequence the EZ-AG produces: press the fret, then pluck the string.
     func testRetriggerModeDropsTheFretNoteAndKeepsThePluck() {
         var config = FilterConfig()
