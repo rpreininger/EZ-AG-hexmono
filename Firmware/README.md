@@ -74,9 +74,10 @@ pio run -t upload      # flashen
 pio device monitor     # serielle Ausgabe
 ```
 
-Die Hardware steckt hinter `MidiPort`. Zurzeit gibt es `UartMidiPort` für DIN-Buchsen;
-alles darüber ist die geprüfte, portable Logik. Die gemessenen EZ-AG-Werte stehen fest
-einkompiliert in `ezag_config()`.
+Die Hardware steckt hinter `MidiPort` in `src/midi_ports.h`: `UartMidiPort` für
+DIN-Buchsen, `UsbHostMidiPort` für den C2MIDI Pro. Alles darüber ist die geprüfte,
+portable Logik. Die gemessenen EZ-AG-Werte stehen fest einkompiliert in
+`ezag_config()` (`src/ezag_config.h`) — dieselben für die Filter-Box und den Synth.
 
 ## Verdrahtung
 
@@ -119,6 +120,99 @@ und der Synth in der Note hängengeblieben. Jetzt wird eingereiht, siehe `TX_QUE
 Welcher Weg benutzt wird, entscheidet `kUseUsbHost` in `src/main.cpp`. Auf `false` läuft
 weiterhin `UartMidiPort` über die DIN-Verdrahtung oben — die Filterlogik und ihre Tests
 merken von beidem nichts, dafür ist `MidiPort` da.
+
+## Der eingebaute SID-Synth
+
+Eine zweite Firmware macht aus der Box einen SID-Synthesizer: ein nachgebildeter SID-Chip
+statt (oder zusätzlich zu) der SidStation.
+
+```sh
+pio run -e synth -t upload    # flashen; die Presets im Flash bleiben dabei stehen
+```
+
+```
+Casio DG-20 → C2MIDI Pro → [EZ-AG-Filter] → SID-Engine (Kern 1) → I2S → PCM5102A
+                                          ↘ MIDI OUT → SidStation
+```
+
+Gespielt wird mit der **Casio DG-20**; ihr MIDI geht ungefiltert in die Engine, auf allen
+Kanälen. Der EZ-AG-Filter von oben lässt sich im Editor unter „Einstellungen"
+zuschalten, die Weiterleitung an MIDI OUT ebenso abschalten. Program Change wählt das
+Preset mit derselben Nummer (0 = Platz 1). Was ein Instrument tatsächlich schickt,
+zeigt `miditrace 1` auf der Konsole.
+
+**Klang bearbeiten:** mit dem WLAN **SID-Synth** verbinden (Passwort `sid12345`), dann
+**http://sid.local** oder http://192.168.4.1 öffnen. Jede Reglerbewegung ist nach 3 ms
+im Klang; eine Tastatur auf der Seite spielt Noten, auch ohne Gitarre. Solange kein DAC
+angeschlossen ist, lässt sich der Klang mit „Ton im Browser" vorhören — etwa 150 ms
+verzögert und mit halber Abtastrate, also nur zum Einstellen.
+
+**Klangerzeugung** wie bei der SidStation: drei Oszillatoren auf einer Note (Wellenform,
+Transponierung, Feinstimmung, Pulsbreite, SID-Hüllkurve, Sync, Ringmodulation), der
+Filter des 6581 oder 8580, eine Hüllkurve für Filter und Tonhöhe, zwei LFOs, Glide,
+Legato, Pitchbend. Gerechnet von reSID 0.16 im Modus SAMPLE_FAST bei 44,1 kHz — gut 14 %
+eines Kerns. Die Modulation läuft blockweise, 344-mal pro Sekunde.
+
+**Presets:** 32 Plätze, je eine JSON-Datei im LittleFS, beim Start alle im RAM. Plätze 1–8
+haben Werksklänge; ein eigener Klang auf einem dieser Plätze überdeckt den Werksklang, bis
+er gelöscht wird. Gespeichert wird nur auf Knopfdruck, und vorher wird ausgeblendet:
+jeder Schreibzugriff auf den Flash hält beide Kerne bis zu 40 ms an, länger als der
+Ausgabepuffer (11,6 ms) reicht. „Alle Presets als Datei sichern" im Editor lädt eine
+JSON-Datei mit allen Klängen herunter.
+
+| Datei | Inhalt |
+| --- | --- |
+| `src/synth/params.h` | **die eine Parametertabelle** — Engine, Presets und Editor lesen sie; ein neuer Parameter ist eine Zeile |
+| `src/synth/engine.*` | reSID, Modulation, I2S, Ein-/Ausblenden, Vorhör-Puffer |
+| `src/synth/presets.*` | Plätze, Werksklänge, JSON lesen und schreiben |
+| `src/synth/web.*` | WLAN-Zugangspunkt, Webserver, WebSocket, `/api/schema`, `/api/backup` |
+| `src/synth/controls.*` | das Encoder-Board am I2C, in einer eigenen Aufgabe auf Kern 0 |
+| `src/synth/synth_main.cpp` | Zustand des Editors, Befehle, MIDI vom Filter zur Engine |
+| `web/index.html` | der Editor; `tools/embed_web.py` packt ihn beim Bauen in die Firmware |
+| `lib/reSID/` | reSID 0.16 von Dag Lem in der MCU-Fassung aus pfm2sid, **GPL-2.0-or-later** |
+
+**Serielle Konsole** (115200 Baud) versteht dieselben Befehle wie der Browser, zum
+Prüfen ohne WLAN: `on 57 100`, `off 57`, `set f.cut 400`, `load 2`, `save 31`, `stat`,
+`peak`, `dump`, `schema`, `state`, `miditrace 1`. Alle fünf Sekunden kommt eine
+Statuszeile.
+
+**Lizenz:** reSID steht unter der GPL. Wer die Synth-Firmware weitergibt, muss deshalb
+auch den Quelltext unter der GPL weitergeben. Die Filter-Box ohne Synth ist davon nicht
+betroffen — sie bindet reSID nicht ein.
+
+### Verdrahtung
+
+```
+PCM5102A-Modul          ESP32-S3
+  VIN ─────────────────── 5V
+  GND ─────────────────── GND
+  BCK ─────────────────── GPIO 12
+  LCK ─────────────────── GPIO 13
+  DIN ─────────────────── GPIO 14
+  SCK ─────────────────── GND      (den Takt erzeugt der Chip selbst aus BCK)
+```
+
+Auf der Rückseite der üblichen lila Module stehen vier Lötbrücken; richtig ist
+1 = L, 2 = L, 3 = H, 4 = L. Brücke 3 (XSMT) auf L schaltet den Ausgang stumm — die
+häufigste Ursache für „kommt nichts raus". Der Ausgang ist Line-Pegel.
+
+```
+Encoder-Board (STEMMA QT)   ESP32-S3
+  rot   (3V3) ─────────────── 3V3   (nicht 5 V)
+  schwarz (GND) ───────────── GND
+  blau  (SDA) ─────────────── GPIO 8
+  gelb  (SCL) ─────────────── GPIO 9
+```
+
+**Encoder-Board:** der Adafruit I2C Quad Rotary Encoder („NeoRotary 4", Produkt 5752)
+aus dem Chromakey-Controller, angesteuert genau wie dort. Regler 1–3 verstellen je einen
+Parameter — voreingestellt Cutoff, Resonanz und das Tempo von LFO 1, im Editor unter
+„Einstellungen" frei zuzuweisen. Rund 128 Rasten für den ganzen Bereich, schnell gedreht
+bis zu viermal so weit. Ein Druck holt den gespeicherten Wert zurück. Regler 4 blättert
+durch die Presets, ein Druck verwirft alle Änderungen. Die LEDs leuchten umso heller, je
+höher der Wert steht; die vierte wird orange, solange etwas ungespeichert ist. Das Board
+darf auch im Betrieb eingesteckt werden, die Firmware sucht alle zwei Sekunden danach.
+An der Konsole spielen `turn <1..4> <rasten>` und `press <1..4>` dasselbe ohne Board.
 
 ## Noch offen
 

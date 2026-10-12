@@ -1,0 +1,555 @@
+<!doctype html>
+<!--
+  Der Editor des SID-Synth. Wird beim Bauen gepackt und in die Firmware eingebettet
+  (tools/embed_web.py), es gibt keinen Zugriff aufs Internet.
+
+  Aufbau aus /api/schema: jede Zeile der Parametertabelle in synth/params.h wird hier zu
+  einem Regler. Neue Parameter erscheinen von selbst.
+
+  Protokoll über den WebSocket /ws, eine Textzeile je Nachricht:
+    an das Gerät   set <key> <wert> · name <text> · load|save <platz> · next · prev ·
+                   init · revert · erase <platz> · on <note> <vel> · off <note> · panic ·
+                   thru 0|1 · ezag 0|1 · start <platz> · knob <1..3> <key> · ping <t> ·
+                   audio 0|1
+    vom Gerät      state <json> · set <key> <wert> <geändert 0|1> · stat <json> ·
+                   pong <t> · msg <text>
+                   und, solange „Ton im Browser" an ist, binäre PCM-Blöcke
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SID-Synth</title>
+<style>
+:root{
+  --bg:#ecebf5;--card:#fff;--fg:#1d1a33;--muted:#6d6990;--line:#d8d5ea;
+  --accent:#5a48c8;--accent-fg:#fff;--key:#fff;--key-black:#26213f;--warn:#b4501e;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#141127;--card:#1f1a3a;--fg:#ebe8ff;--muted:#a19cc7;--line:#342d5e;
+  --accent:#9c8cff;--accent-fg:#141127;--key:#ddd9f3;--key-black:#0c0a18;--warn:#ff9a62;
+  color-scheme:dark}}
+:root[data-theme=dark]{
+  --bg:#141127;--card:#1f1a3a;--fg:#ebe8ff;--muted:#a19cc7;--line:#342d5e;
+  --accent:#9c8cff;--accent-fg:#141127;--key:#ddd9f3;--key-black:#0c0a18;--warn:#ff9a62;
+  color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);
+  padding:calc(8px + env(safe-area-inset-top)) 16px 6px;border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:8px}
+h1{font-size:17px;margin:0}
+#dot{width:9px;height:9px;border-radius:50%;background:#c33;flex:none}
+#dot.on{background:#2a9d55}
+#info{flex:1;text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#info.hot{color:var(--warn)}
+.bar{display:flex;gap:6px;margin-top:7px;align-items:center}
+.bar select,.bar input{flex:1;min-width:0}
+button,select,input[type=text]{font:inherit;color:var(--fg);background:var(--card);
+  border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+button{cursor:pointer;white-space:nowrap}
+button.primary,button.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+#dirty{color:var(--warn);font-size:12px;min-height:16px;margin-top:4px}
+.muted{color:var(--muted);font-size:13px}
+main{padding:12px 16px 200px;display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));
+  gap:12px;max-width:1300px;margin:0 auto;align-items:start}
+details{background:var(--card);border-radius:12px;padding:2px 14px 8px;border:1px solid var(--line)}
+summary{font-weight:600;padding:9px 0;cursor:pointer}
+.row{display:grid;grid-template-columns:1fr auto;gap:2px 8px;margin:7px 0;align-items:center}
+.row .v{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.row input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--accent);margin:2px 0}
+.row select{max-width:62%}
+.row.t{grid-template-columns:auto 1fr}
+.row.t input{width:20px;height:20px;accent-color:var(--accent);margin:0}
+a{color:var(--accent)}
+#kbd{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--bg);border-top:1px solid var(--line);
+  padding:2px 16px calc(8px + env(safe-area-inset-bottom))}
+#kbd .bar{max-width:900px;margin:6px auto 0}
+#oct{min-width:2.4em;text-align:center;font-variant-numeric:tabular-nums}
+#keys{position:relative;height:104px;user-select:none;-webkit-user-select:none;touch-action:none;
+  max-width:900px;margin:6px auto 0}
+#keys[hidden]{display:none}
+.k{position:absolute;top:0;height:100%;border:1px solid var(--line);border-radius:0 0 6px 6px;background:var(--key)}
+.k.b{height:60%;z-index:2;background:var(--key-black);border-color:var(--key-black)}
+.k.down{background:var(--accent)}
+#toast{position:fixed;left:50%;bottom:190px;transform:translateX(-50%);z-index:9;max-width:90vw;
+  background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:8px;opacity:0;
+  transition:opacity .3s;pointer-events:none}
+#toast.show{opacity:.94}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><span id="dot"></span><h1>SID-Synth</h1><span id="info">verbinde …</span></div>
+  <div class="bar">
+    <button id="prev" aria-label="Voriges Preset">‹</button>
+    <select id="slot" aria-label="Preset"></select>
+    <button id="next" aria-label="Nächstes Preset">›</button>
+  </div>
+  <div class="bar">
+    <input id="name" type="text" maxlength="23" placeholder="Name" autocomplete="off" aria-label="Name">
+    <button id="save" class="primary">Speichern</button>
+    <button id="saveas">Unter …</button>
+  </div>
+  <div class="bar" id="panel" hidden>
+    <select id="target" aria-label="Zielplatz"></select>
+    <button id="saveto" class="primary">Hierhin</button>
+    <button id="cancel">Abbrechen</button>
+  </div>
+  <div id="dirty"></div>
+</header>
+<main id="params"></main>
+<div id="kbd">
+  <div class="bar">
+    <button id="down" aria-label="Oktave tiefer">−</button><span id="oct">C3</span>
+    <button id="up" aria-label="Oktave höher">+</button>
+    <button id="hold">Halten</button>
+    <span style="flex:1"></span>
+    <button id="snd">Ton im Browser</button>
+    <button id="panic">Panik</button>
+    <button id="fold" aria-label="Tastatur ein- oder ausblenden">▾</button>
+  </div>
+  <div id="keys"></div>
+</div>
+<div id="toast"></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+
+// Zeiten der SID-Hüllkurve laut Datenblatt, in ms.
+const SID_A = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
+const SID_D = [6, 24, 48, 72, 114, 168, 204, 240, 300, 750, 1500, 2400, 3000, 9000, 15000, 24000];
+
+let schema = null, ws = null, st = null, active = null;
+const ctl = [], byKey = {}, pend = new Map();
+let raf = 0, base = 48, holding = false;
+const lit = new Set(), pointers = new Map(), rtts = [];
+
+// MARK: Anzeige der Werte
+
+const num = (x, d) => x.toFixed(d).replace('.', ',');
+const sign = v => (v > 0 ? '+' : '') + v;
+const ms = x => x < 1000 ? Math.round(x) + ' ms' : num(x / 1000, x < 10000 ? 2 : 1) + ' s';
+
+// Dieselbe Rechnung wie curve() in params.cpp.
+function curve(p, v) {
+  const span = p.max - p.min;
+  if (p.fmt === 'exp') return p.lo * Math.pow(p.hi / p.lo, (v - p.min) / span);
+  if (v <= p.min) return 0;
+  return p.lo * Math.pow(p.hi / p.lo, (v - p.min - 1) / (span - 1));
+}
+
+function show(p, v) {
+  switch (p.fmt) {
+    case 'semi': return sign(v) + ' HT';
+    case 'cent': return sign(v) + ' ct';
+    case 'pct': return (p.min < 0 ? sign(v) : v) + ' %';
+    case 'pulse': return num(v / 40.95, 0) + ' %';
+    case 'sida': return ms(SID_A[v]);
+    case 'sidd': return ms(SID_D[v]);
+    case 'exp': case 'exp0': {
+      const x = curve(p, v);
+      if (p.unit === 'ms') return ms(x);
+      if (x === 0) return 'aus';
+      if (p.unit === 'Hz') return num(x, x < 1 ? 2 : x < 10 ? 1 : 0) + ' Hz';
+      return Math.round(x) + ' ' + p.unit;
+    }
+    default: return '' + v;
+  }
+}
+
+// MARK: Aufbau aus dem Schema
+
+function folded() {
+  try { return new Set(JSON.parse(localStorage.getItem('folded') || '[]')); } catch (e) { return new Set(); }
+}
+function remember(group, open) {
+  const set = folded();
+  open ? set.delete(group) : set.add(group);
+  try { localStorage.setItem('folded', JSON.stringify([...set])); } catch (e) { /* privates Fenster */ }
+}
+
+function card(main, title) {
+  const d = document.createElement('details');
+  d.open = !folded().has(title);
+  const s = document.createElement('summary');
+  s.textContent = title;
+  d.appendChild(s);
+  d.ontoggle = () => remember(title, d.open);
+  main.appendChild(d);
+  return d;
+}
+
+function build() {
+  const main = $('params');
+  main.textContent = '';
+  const groups = new Map();
+  schema.params.forEach((p, i) => {
+    if (!groups.has(p.group)) groups.set(p.group, card(main, p.group));
+    const row = document.createElement('div');
+    row.className = 'row';
+    const label = document.createElement('label');
+    label.textContent = p.label;
+    label.htmlFor = 'p' + i;
+    let input, val = null;
+    if (p.kind === 'toggle') {
+      row.classList.add('t');
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.onchange = () => send(p.key, input.checked ? 1 : 0, true);
+      row.append(input, label);
+    } else if (p.kind === 'choice') {
+      input = document.createElement('select');
+      p.choices.forEach((c, j) => input.add(new Option(c, j)));
+      input.onchange = () => send(p.key, +input.value, true);
+      row.append(label, input);
+    } else {
+      input = document.createElement('input');
+      input.type = 'range';
+      input.min = p.min; input.max = p.max; input.step = 1; input.value = p.def;
+      val = document.createElement('span');
+      val.className = 'v';
+      val.textContent = show(p, p.def);
+      input.oninput = () => { val.textContent = show(p, +input.value); send(p.key, +input.value); };
+      // Solange der Finger am Regler ist, kein Echo vom Gerät hineinschreiben.
+      input.addEventListener('pointerdown', () => { active = input; });
+      row.append(label, val, input);
+    }
+    input.id = 'p' + i;
+    groups.get(p.group).appendChild(row);
+    ctl[i] = { p, input, val };
+    byKey[p.key] = i;
+  });
+  settings(main);
+}
+addEventListener('pointerup', () => setTimeout(() => { active = null; }, 300));
+addEventListener('pointercancel', () => { active = null; });
+
+function settings(main) {
+  const d = card(main, 'Einstellungen');
+  d.insertAdjacentHTML('beforeend', `
+    <div class="row t"><input type="checkbox" id="thru"><label for="thru">Noten auch an MIDI OUT (SidStation)</label></div>
+    <div class="row t"><input type="checkbox" id="ezag"><label for="ezag">EZ-AG-Filter (Saitenkanäle zusammenführen, Bundgriffe ausblenden) – für die DG-20 aus</label></div>
+    <div class="row"><label for="start">Beim Einschalten laden</label><select id="start"></select></div>
+    <div class="row"><label for="knob1">Drehregler 1</label><select id="knob1"></select></div>
+    <div class="row"><label for="knob2">Drehregler 2</label><select id="knob2"></select></div>
+    <div class="row"><label for="knob3">Drehregler 3</label><select id="knob3"></select></div>
+    <p id="enc" class="muted"></p>
+    <div class="bar"><button id="init">Neuer Klang</button><button id="revert">Änderungen verwerfen</button></div>
+    <div class="bar"><button id="erase">Eigenen Klang auf diesem Platz löschen</button></div>
+    <p><a href="/api/backup" download="sid-presets.json">Alle Presets als Datei sichern</a></p>`);
+  $('thru').onchange = e => cmd('thru ' + (e.target.checked ? 1 : 0));
+  $('ezag').onchange = e => cmd('ezag ' + (e.target.checked ? 1 : 0));
+  for (const n of [1, 2, 3]) {
+    const sel = $('knob' + n);
+    schema.params.forEach(p => sel.add(new Option(p.group + ' · ' + p.label, p.key)));
+    sel.onchange = () => cmd(`knob ${n} ${sel.value}`);
+  }
+  $('start').onchange = e => cmd('start ' + e.target.value);
+  $('init').onclick = () => { if (keep()) cmd('init'); };
+  $('revert').onclick = () => cmd('revert');
+  $('erase').onclick = () => {
+    if (confirm(`Platz ${st.slot + 1} „${st.names[st.slot]}“ löschen? Ein Werksklang kommt dann wieder zum Vorschein.`)) {
+      cmd('erase ' + st.slot);
+    }
+  };
+}
+
+// MARK: Zustand vom Gerät
+
+function setVal(i, v) {
+  const c = ctl[i];
+  if (!c) return;
+  if (st) st.v[i] = v;
+  if (c.input === active) return;
+  if (c.p.kind === 'toggle') c.input.checked = !!v; else c.input.value = v;
+  if (c.val) c.val.textContent = show(c.p, v);
+}
+
+function slotLabel(i) {
+  return String(i + 1).padStart(2, '0') + '  ' + (st.used[i] ? st.names[i] : '— leer —');
+}
+
+function applyState(s) {
+  st = s;
+  s.v.forEach((v, i) => setVal(i, v));
+  const slot = $('slot'), target = $('target'), start = $('start');
+  slot.textContent = ''; target.textContent = ''; start.textContent = '';
+  s.names.forEach((n, i) => {
+    const o = new Option(slotLabel(i), i);
+    o.disabled = !s.used[i];
+    slot.add(o);
+    target.add(new Option(slotLabel(i), i));
+    if (s.used[i]) start.add(new Option(slotLabel(i), i));
+  });
+  slot.value = s.slot; target.value = s.slot; start.value = s.start;
+  if (document.activeElement !== $('name')) $('name').value = s.name;
+  $('thru').checked = !!s.thru;
+  $('ezag').checked = !!s.ezag;
+  $('erase').disabled = !s.own[s.slot];
+  s.knobs.forEach((key, k) => { $('knob' + (k + 1)).value = key; });
+  $('enc').textContent = s.enc
+    ? 'Encoder-Board verbunden. Regler 4 blättert durch die Presets; Drücken holt den gespeicherten Wert zurück.'
+    : 'Encoder-Board nicht gefunden – STEMMA-QT-Kabel an 3V3, GND, GPIO 8 (SDA) und GPIO 9 (SCL).';
+  showDirty();
+}
+
+function showDirty() {
+  $('dirty').textContent = st && st.dirty ? '● geändert – noch nicht gespeichert' : '';
+}
+
+function showStat(s) {
+  const peak = Math.round(s.peak / 327.67);
+  const rtt = rtts.length ? [...rtts].sort((a, b) => a - b)[rtts.length >> 1] : null;
+  const info = $('info');
+  info.textContent = `CPU ${num(s.load, 0)} % · Pegel ${peak} % · USB ${s.usb ? '✓' : '–'}` +
+    (rtt != null ? ` · ${Math.round(rtt)} ms` : '');
+  info.classList.toggle('hot', peak >= 99);
+  info.title = peak >= 99 ? 'Übersteuert: Lautstärke oder Resonanz zurücknehmen' : '';
+}
+
+let toastTimer = 0;
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// MARK: Verbindung
+
+function cmd(text) { if (ws && ws.readyState === 1) ws.send(text); }
+
+// Höchstens ein Wert je Regler und Bildschirmbild — beim Ziehen kämen sonst Hunderte.
+function send(key, v, now) {
+  pend.set(key, v);
+  if (st && !st.dirty) { st.dirty = true; showDirty(); }
+  if (now) { flush(); return; }
+  if (!raf) raf = requestAnimationFrame(flush);
+}
+function flush() {
+  raf = 0;
+  for (const [k, v] of pend) cmd('set ' + k + ' ' + v);
+  pend.clear();
+}
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { $('dot').classList.add('on'); if (hearing()) cmd('audio 1'); };
+  ws.onclose = () => {
+    $('dot').classList.remove('on');
+    $('info').textContent = 'getrennt, verbinde neu …';
+    setTimeout(connect, 1000);
+  };
+  ws.onmessage = e => {
+    if (typeof e.data !== 'string') { pcm(e.data); return; }
+    const t = e.data, sp = t.indexOf(' ');
+    const c = sp < 0 ? t : t.slice(0, sp), a = sp < 0 ? '' : t.slice(sp + 1);
+    if (c === 'set') {
+      // set <key> <wert> <geändert>: das Gerät vergleicht mit dem gespeicherten Stand.
+      const [k, v, d] = a.split(' '), i = byKey[k];
+      if (i != null) setVal(i, +v);
+      if (st && d !== undefined) { st.dirty = d === '1'; showDirty(); }
+    } else if (c === 'state') applyState(JSON.parse(a));
+    else if (c === 'stat') showStat(JSON.parse(a));
+    else if (c === 'pong') { rtts.push(performance.now() - +a); if (rtts.length > 9) rtts.shift(); }
+    else if (c === 'msg') toast(a);
+  };
+}
+setInterval(() => cmd('ping ' + performance.now()), 2000);
+
+// MARK: Presets
+
+const keep = () => !st || !st.dirty || confirm('Die Änderungen sind noch nicht gespeichert. Verwerfen?');
+function sendName() {
+  const n = $('name').value.trim();
+  if (st && n !== st.name) cmd('name ' + n);
+}
+
+$('prev').onclick = () => { if (keep()) cmd('prev'); };
+$('next').onclick = () => { if (keep()) cmd('next'); };
+$('slot').onchange = () => {
+  if (keep()) cmd('load ' + $('slot').value); else $('slot').value = st.slot;
+};
+$('name').onchange = sendName;
+$('save').onclick = () => { sendName(); cmd('save ' + st.slot); };
+$('saveas').onclick = () => { $('target').value = st.slot; $('panel').hidden = false; };
+$('cancel').onclick = () => { $('panel').hidden = true; };
+$('saveto').onclick = () => {
+  const t = +$('target').value;
+  if (st.used[t] && t !== st.slot && !confirm(`Platz ${t + 1} „${st.names[t]}“ überschreiben?`)) return;
+  sendName();
+  cmd('save ' + t);
+  $('panel').hidden = true;
+};
+
+// MARK: Tastatur
+
+const WHITE = [0, 2, 4, 5, 7, 9, 11];
+const keyFor = n => $('keys').querySelector(`[data-n="${n - base}"]`);
+
+function buildKeys() {
+  const box = $('keys');
+  box.textContent = '';
+  const whites = box.clientWidth < 520 ? 10 : 15;
+  const w = 100 / whites;
+  for (let n = 0, wi = 0; wi < whites; n++) {
+    const k = document.createElement('div');
+    k.dataset.n = n;
+    if (WHITE.includes(n % 12)) {
+      k.className = 'k';
+      k.style.left = wi * w + '%';
+      k.style.width = w + '%';
+      wi++;
+    } else {
+      k.className = 'k b';
+      k.style.left = (wi - 0.32) * w + '%';
+      k.style.width = w * 0.64 + '%';
+    }
+    box.appendChild(k);
+  }
+  $('oct').textContent = 'C' + (base / 12 - 1);
+  lit.forEach(n => { const k = keyFor(n); if (k) k.classList.add('down'); });
+}
+
+function noteDown(n) {
+  if (holding) {
+    // Ein Synth mit einer Stimme: die gehaltene Note wechselt, ein zweiter Druck löst sie.
+    const was = lit.has(n);
+    allUp();
+    if (was) return;
+  }
+  lit.add(n);
+  const k = keyFor(n);
+  if (k) k.classList.add('down');
+  cmd('on ' + n + ' 100');
+}
+function noteUp(n) {
+  if (holding || !lit.has(n)) return;
+  lit.delete(n);
+  const k = keyFor(n);
+  if (k) k.classList.remove('down');
+  cmd('off ' + n);
+}
+function allUp() {
+  lit.forEach(n => { cmd('off ' + n); const k = keyFor(n); if (k) k.classList.remove('down'); });
+  lit.clear();
+}
+
+const keys = $('keys');
+function track(e) {
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const n = el && el.classList.contains('k') ? base + +el.dataset.n : null;
+  const old = pointers.get(e.pointerId);
+  if (n === old) return;
+  if (old != null) noteUp(old);
+  pointers.set(e.pointerId, n);
+  if (n != null) noteDown(n);
+}
+keys.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  keys.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, null);
+  track(e);
+});
+keys.addEventListener('pointermove', e => { if (pointers.has(e.pointerId) && !holding) track(e); });
+const lift = e => {
+  const old = pointers.get(e.pointerId);
+  pointers.delete(e.pointerId);
+  if (old != null) noteUp(old);
+};
+keys.addEventListener('pointerup', lift);
+keys.addEventListener('pointercancel', lift);
+
+// Am Rechner: die Buchstabenreihe A–K als Klaviatur, W, E, T, Z, U als schwarze Tasten.
+const CODES = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY', 'KeyH', 'KeyU', 'KeyJ', 'KeyK'];
+const typing = e => e.target.tagName === 'INPUT' && e.target.type === 'text';
+addEventListener('keydown', e => {
+  if (e.repeat || typing(e) || e.metaKey || e.ctrlKey) return;
+  const i = CODES.indexOf(e.code);
+  if (i >= 0) noteDown(base + i);
+});
+addEventListener('keyup', e => {
+  const i = CODES.indexOf(e.code);
+  if (i >= 0 && !typing(e)) noteUp(base + i);
+});
+
+function octave(d) {
+  const next = base + 12 * d;
+  if (next < 24 || next > 84) return;
+  allUp();
+  base = next;
+  buildKeys();
+}
+$('down').onclick = () => octave(-1);
+$('up').onclick = () => octave(1);
+$('hold').onclick = () => {
+  holding = !holding;
+  $('hold').classList.toggle('on', holding);
+  if (!holding) { const held = [...lit]; lit.clear(); held.forEach(n => { cmd('off ' + n); const k = keyFor(n); if (k) k.classList.remove('down'); }); }
+};
+$('panic').onclick = () => { lit.clear(); buildKeys(); cmd('panic'); };
+$('fold').onclick = () => {
+  const k = $('keys');
+  k.hidden = !k.hidden;
+  $('fold').textContent = k.hidden ? '▴' : '▾';
+  if (!k.hidden) buildKeys();
+};
+let resizeTimer = 0;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(buildKeys, 150); });
+
+// MARK: Ton im Browser — nur zum Vorhören, solange kein DAC dran ist
+
+let ac = null, next = 0;
+const hearing = () => ac && ac.state === 'running';
+$('snd').onclick = async () => {
+  if (hearing()) {
+    await ac.suspend();
+    cmd('audio 0');
+    $('snd').classList.remove('on');
+    return;
+  }
+  // iPhone: sonst schaltet der Stummschalter den Browser-Ton ab.
+  if (navigator.audioSession) navigator.audioSession.type = 'playback';
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  await ac.resume();
+  next = 0;
+  cmd('audio 1');
+  $('snd').classList.add('on');
+  toast('Ton kommt etwa 150 ms verzögert – nur zum Vorhören');
+};
+// 512 Samples, 16 Bit, 22050 Hz je Nachricht. 120 ms Vorlauf gegen WLAN-Schwankungen.
+function pcm(buf) {
+  if (!hearing()) return;
+  const d = new Int16Array(buf), b = ac.createBuffer(1, d.length, 22050), ch = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) ch[i] = d[i] / 32768;
+  const now = ac.currentTime;
+  if (next < now + 0.01) next = now + 0.12;
+  else if (next > now + 0.5) return;
+  const s = ac.createBufferSource();
+  s.buffer = b;
+  s.connect(ac.destination);
+  s.start(next);
+  next += b.duration;
+}
+
+// MARK: Start
+
+async function boot() {
+  for (;;) {
+    try { schema = await (await fetch('/api/schema')).json(); break; }
+    catch (e) { $('info').textContent = 'warte auf das Gerät …'; await new Promise(r => setTimeout(r, 1500)); }
+  }
+  build();
+  buildKeys();
+  connect();
+}
+boot();
+</script>
+</body>
+</html>
