@@ -2,6 +2,8 @@
 build/
 build-ios/
 Firmware/.pio/
+Firmware/src/synth/web_page.h
+Spikes/*/.pio/
 Packages/MidiFilterCore/.build/
 Packages/MidiFilterCore/.swiftpm/
 
