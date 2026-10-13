@@ -10,6 +10,7 @@
 #include "engine.h"
 #include "params.h"
 #include "presets.h"
+#include "schema.h"
 #include "web_page.h"
 
 namespace synth {
@@ -134,59 +135,9 @@ void on_restore(AsyncWebServerRequest* request) {
     request->send(202, "text/plain", "Presets werden geladen …");
 }
 
-// MARK: - Schema
-
-void print_string(Print& out, const char* text) {
-    out.print('"');
-    for (const char* c = text; *c != '\0'; ++c) {
-        if (*c == '"' || *c == '\\') out.print('\\');
-        out.print(*c);
-    }
-    out.print('"');
-}
-
-const char* kind_name(Kind kind) {
-    switch (kind) {
-        case Kind::Range: return "range";
-        case Kind::Choice: return "choice";
-        case Kind::Toggle: return "toggle";
-    }
-    return "range";
-}
-
 }  // namespace
 
-void write_schema(Print& out) {
-    out.printf("{\"slots\":%d,\"params\":[", presets::kSlots);
-    for (size_t i = 0; i < kParamCount; ++i) {
-        const Param& p = kParams[i];
-        if (i > 0) out.print(',');
-        out.print("{\"key\":");
-        print_string(out, p.key);
-        out.print(",\"label\":");
-        print_string(out, p.label);
-        out.print(",\"group\":");
-        print_string(out, p.group);
-        out.printf(",\"kind\":\"%s\",\"min\":%d,\"max\":%d,\"def\":%d,\"fmt\":\"%s\"",
-                   kind_name(p.kind), p.min, p.max, p.def, format_name(p.format));
-        if (p.kind == Kind::Choice) {
-            out.print(",\"choices\":[\"");
-            for (const char* c = p.choices; *c != '\0'; ++c) {
-                if (*c == '|') {
-                    out.print("\",\"");
-                } else {
-                    out.print(*c);
-                }
-            }
-            out.print("\"]");
-        }
-        if (p.format == Format::Exp || p.format == Format::Exp0) {
-            out.printf(",\"lo\":%g,\"hi\":%g,\"unit\":\"%s\"", p.lo, p.hi, p.unit);
-        }
-        out.print('}');
-    }
-    out.print("]}");
-}
+void write_schema(Print& out) { synth::write_schema(out); }
 
 void begin(CommandHandler handler, RestoreHandler restore) {
     g_handler = handler;

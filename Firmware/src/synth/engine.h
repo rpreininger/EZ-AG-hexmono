@@ -1,4 +1,5 @@
-// Die Klangerzeugung: reSID auf Kern 1, Ausgabe über I2S an einen PCM5102A.
+// Die Klangerzeugung: reSID auf Kern 1, Ausgabe über I2S an einen PCM5102A. Die
+// Klangrechnung selbst steht in engine_core.h, das hier ist die Hülle auf der Box.
 //
 // Alle Aufrufe hier sind von jeder Aufgabe aus erlaubt. Sie legen nur einen Befehl in
 // eine Warteschlange; die Audio-Aufgabe holt ihn vor dem nächsten Block ab, spätestens
@@ -10,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "engine_core.h"
 #include "params.h"
 
 namespace synth {
@@ -18,8 +20,6 @@ namespace synth {
 constexpr int kI2sBckPin = 12;
 constexpr int kI2sWsPin = 13;
 constexpr int kI2sDoutPin = 14;
-
-constexpr uint32_t kSampleRate = 44100;
 
 /// Mithören im Browser, solange kein DAC angeschlossen ist: halbe Abtastrate, Mono.
 class PreviewRing {

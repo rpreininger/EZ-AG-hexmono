@@ -9,12 +9,11 @@
 
 #include <Print.h>
 
+#include "factory.h"
 #include "params.h"
 
 namespace synth {
 namespace presets {
-
-constexpr int kSlots = 32;
 
 /// Bindet das Dateisystem ein und lädt alle Plätze. false, wenn das nicht ging — dann
 /// gibt es nur die Werksklänge, und Speichern schlägt fehl.
