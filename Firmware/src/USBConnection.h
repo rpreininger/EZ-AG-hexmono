@@ -6,6 +6,7 @@
 //
 // Lokale Änderung gegenüber dem Original: `sendMidiMessage` reiht Pakete ein, statt sie
 // zu verwerfen, solange ein OUT-Transfer läuft. Suche nach TX_QUEUE_SIZE.
+// Außerdem `getDeviceHandle()` für die Deskriptor-Ausgabe auf der Konsole.
 //
 #ifndef USB_CONNECTION_H
 #define USB_CONNECTION_H
@@ -57,6 +58,9 @@ public:
 
     // Returns the last error message (empty if none).
     const String& getLastError() const { return lastError; }
+
+    // Lokal ergänzt: das geöffnete Gerät, nullptr ohne Gerät — für die Deskriptor-Ausgabe.
+    usb_device_handle_t getDeviceHandle() const { return deviceHandle; }
 
     // Queue access methods (for debugging or external analysis)
     int getQueueSize() const;

@@ -174,7 +174,8 @@ JSON-Datei mit allen Klängen herunter.
 **Serielle Konsole** (115200 Baud) versteht dieselben Befehle wie der Browser, zum
 Prüfen ohne WLAN: `on 57 100`, `off 57`, `set f.cut 400`, `load 2`, `save 31`, `stat`,
 `peak`, `dump`, `schema`, `state`, `miditrace 1`. Alle fünf Sekunden kommt eine
-Statuszeile. `tools/synth_console.py` schickt Befehle, ohne das Board neu zu starten;
+Statuszeile. Nur an der Konsole: `usb` gibt Geschwindigkeit und rohe Deskriptoren des
+Geräts an der nativen USB-Buchse aus. `tools/synth_console.py` schickt Befehle, ohne das Board neu zu starten;
 `tools/synth_check.py` ist ein Selbsttest über die Konsole.
 
 **Lizenz:** reSID steht unter der GPL. Wer die Synth-Firmware weitergibt, muss deshalb

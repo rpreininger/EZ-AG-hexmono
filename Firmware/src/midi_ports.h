@@ -78,6 +78,34 @@ public:
     /// Hat der Host das Kabel gefunden und beansprucht?
     bool is_connected() const { return usb_.isConnected(); }
 
+    /// Geschwindigkeit, Namen und die rohen Deskriptoren des angeschlossenen Geräts, zum
+    /// Auswerten am PC. Nur für die Fehlersuche — läuft neben der USB-Aufgabe her.
+    void print_descriptors(Print& out) const {
+        const usb_device_handle_t device = usb_.getDeviceHandle();
+        if (device == nullptr) {
+            out.println("USB kein Gerät");
+            return;
+        }
+        usb_device_info_t info;
+        if (usb_host_device_info(device, &info) == ESP_OK) {
+            out.printf("USB INFO speed=%s addr=%u ep0=%u config=%u\n",
+                       info.speed == USB_SPEED_FULL ? "full" : "low", info.dev_addr,
+                       info.bMaxPacketSize0, info.bConfigurationValue);
+            print_string(out, "MANUFACTURER", info.str_desc_manufacturer);
+            print_string(out, "PRODUCT", info.str_desc_product);
+        }
+        const usb_device_desc_t* device_desc = nullptr;
+        if (usb_host_get_device_descriptor(device, &device_desc) == ESP_OK) {
+            print_hex(out, "DEV", device_desc->val, USB_DEVICE_DESC_SIZE);
+        }
+        const usb_config_desc_t* config_desc = nullptr;
+        if (usb_host_get_active_config_descriptor(device, &config_desc) == ESP_OK) {
+            print_hex(out, "CFG", config_desc->val, config_desc->wTotalLength);
+        }
+        out.printf("USB MIDI %s, Fehler: %s\n", usb_.isConnected() ? "bereit" : "nicht bereit",
+                   usb_.getLastError().c_str());
+    }
+
     bool read(midifilter::Event& out) override {
         usb_.task();  // leert den Ringpuffer der USB-Aufgabe, ruft dabei on_midi auf
         if (head_ == tail_) return false;
@@ -112,6 +140,26 @@ private:
             default:
                 return 0;
         }
+    }
+
+    /// Je 32 Byte eine Zeile `USB <tag> <hex>`.
+    static void print_hex(Print& out, const char* tag, const uint8_t* data, size_t length) {
+        for (size_t row = 0; row < length; row += 32) {
+            out.printf("USB %s", tag);
+            for (size_t i = row; i < length && i < row + 32; ++i) out.printf(" %02X", data[i]);
+            out.println();
+        }
+    }
+
+    /// Nur die ASCII-Zeichen des UTF-16-Strings.
+    static void print_string(Print& out, const char* tag, const usb_str_desc_t* desc) {
+        if (desc == nullptr) return;
+        out.printf("USB %s ", tag);
+        for (int i = 0; i < (desc->bLength - 2) / 2; ++i) {
+            const uint16_t c = desc->wData[i];
+            out.write(c >= 0x20 && c < 0x7F ? static_cast<char>(c) : '?');
+        }
+        out.println();
     }
 
     static void on_connect(void* context) {

@@ -260,6 +260,7 @@ void USBConnection::_clientEventCallback(const usb_host_client_event_msg_t *even
                 usbCon->_outTransfer = nullptr;
             }
             usb_host_device_close(usbCon->clientHandle, usbCon->deviceHandle);
+            usbCon->deviceHandle = nullptr;  // lokal ergänzt, siehe getDeviceHandle()
             usbCon->isReady = false;
             usbCon->dispatchDisconnected();
             break;

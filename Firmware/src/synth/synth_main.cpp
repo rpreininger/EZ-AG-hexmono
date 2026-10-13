@@ -396,6 +396,8 @@ void handle(char* line) {
         Serial.println(status_line());
     } else if (strcmp(command, "peak") == 0) {
         Serial.printf("PEAK %d\n", engine::take_peak());
+    } else if (strcmp(command, "usb") == 0) {
+        g_port.print_descriptors(Serial);
     } else if (strcmp(command, "dump") == 0) {
         presets::write_json(Serial, g_edit);
         Serial.println();
