@@ -71,9 +71,25 @@ const char* format_name(Format format) {
     return "int";
 }
 
+void set_name(Patch& patch, const char* text) {
+    size_t n = 0;
+    for (const char* c = text; *c != '\0' && n < kNameLength - 1; ++c) {
+        if (static_cast<uint8_t>(*c) >= 0x20) patch.name[n++] = *c;
+    }
+    // Ein beim Kürzen zerschnittenes UTF-8-Zeichen ganz weglassen, ein vollständiges nicht.
+    size_t lead = n;
+    while (lead > 0 && (static_cast<uint8_t>(patch.name[lead - 1]) & 0xC0) == 0x80) --lead;
+    if (lead > 0) {
+        const uint8_t first = static_cast<uint8_t>(patch.name[lead - 1]);
+        const size_t size = first >= 0xF0 ? 4 : first >= 0xE0 ? 3 : first >= 0xC0 ? 2 : 1;
+        if (n - (lead - 1) < size) n = lead - 1;
+    }
+    patch.name[n] = '\0';
+}
+
 void init_patch(Patch& patch, const char* name) {
     memset(&patch, 0, sizeof(patch));
-    strncpy(patch.name, name, kNameLength - 1);
+    set_name(patch, name);
     for (size_t i = 0; i < kParamCount; ++i) patch.values[i] = kParams[i].def;
 }
 

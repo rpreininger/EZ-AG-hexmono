@@ -160,13 +160,14 @@ bool while_muted(Work work) {
 
 // MARK: - Befehle
 
+bool same_patch(const Patch& a, const Patch& b) {
+    return memcmp(a.values, b.values, sizeof(a.values)) == 0 && strcmp(a.name, b.name) == 0;
+}
+
 /// Weicht der Klang vom gespeicherten Stand seines Platzes ab? Genau verglichen, damit
 /// ein Regler, der auf seinen alten Wert zurückgedreht wird, nichts als geändert meldet.
 void update_dirty() {
-    const Patch& stored = presets::get(g_slot);
-    g_dirty = !presets::used(g_slot) ||
-              memcmp(stored.values, g_edit.values, sizeof(g_edit.values)) != 0 ||
-              strcmp(stored.name, g_edit.name) != 0;
+    g_dirty = !presets::used(g_slot) || !same_patch(presets::get(g_slot), g_edit);
 }
 
 /// Ein Parameterwert aus Browser, Konsole oder Encoder — alle nehmen diesen Weg.
@@ -200,6 +201,54 @@ void save_slot(int slot) {
     broadcast_state();
     notify(ok ? String("Gespeichert auf Platz ") + (slot + 1) + " (" + (millis() - start) + " ms)"
               : String("Speichern fehlgeschlagen"));
+}
+
+/// Presets aus einer Sicherungsdatei, im Format von /api/backup — hochgeladen über den
+/// Browser oder an der Konsole mit `restore`. Geschrieben wird nur, was sich ändert, alles
+/// in einem Ausblenden: bei einer vollen Datei setzt der Ton bis zu drei Sekunden aus.
+void restore_presets(const char* text, size_t length) {
+    static Patch incoming[presets::kSlots];
+    bool found[presets::kSlots];
+    const int count = presets::read_backup(text, length, incoming, found);
+    if (count <= 0) {
+        notify(count < 0 ? "Datei nicht lesbar – erwartet wird eine Sicherung aus "
+                           "„Alle Presets als Datei sichern“"
+                         : "Keine Presets in der Datei");
+        return;
+    }
+
+    bool changed[presets::kSlots];
+    int to_write = 0;
+    for (int slot = 0; slot < presets::kSlots; ++slot) {
+        changed[slot] = found[slot] && !(presets::used(slot) &&
+                                         same_patch(presets::get(slot), incoming[slot]));
+        if (changed[slot]) ++to_write;
+    }
+
+    const bool edited = g_dirty;
+    const uint32_t start = millis();
+    int written = 0;
+    if (to_write > 0) {
+        while_muted([&] {
+            for (int slot = 0; slot < presets::kSlots; ++slot) {
+                if (changed[slot] && presets::save(slot, incoming[slot])) ++written;
+            }
+            return written == to_write;
+        });
+    }
+
+    // Der Klang im Editor folgt seinem Platz, außer er hat ungespeicherte Änderungen.
+    if (changed[g_slot] && !edited) {
+        load_slot(g_slot);
+    } else {
+        update_dirty();
+        broadcast_state();
+    }
+    String message = String(written) + (written == 1 ? " Preset" : " Presets") + " geladen";
+    if (count > to_write) message += String(", ") + (count - to_write) + " unverändert";
+    if (written < to_write) message += String(", ") + (to_write - written) + " fehlgeschlagen";
+    if (to_write > 0) message += String(" (") + (millis() - start) + " ms)";
+    notify(message);
 }
 
 // MARK: - Encoder-Board
@@ -281,19 +330,6 @@ void load_knob_settings() {
     }
 }
 
-/// Kürzt auf die Länge des Namensfelds, ohne ein UTF-8-Zeichen zu zerschneiden.
-void set_name(const char* text) {
-    char name[kNameLength];
-    size_t n = 0;
-    for (const char* c = text; *c != '\0' && n < kNameLength - 1; ++c) {
-        if (static_cast<uint8_t>(*c) >= 0x20) name[n++] = *c;
-    }
-    while (n > 0 && (static_cast<uint8_t>(name[n - 1]) & 0xC0) == 0x80) --n;  // Folgebytes
-    if (n > 0 && (static_cast<uint8_t>(name[n - 1]) & 0xC0) == 0xC0) --n;     // Startbyte
-    name[n] = '\0';
-    memcpy(g_edit.name, name, n + 1);
-}
-
 /// Eine Befehlszeile aus Browser oder Konsole, siehe web/index.html.
 void handle(char* line) {
     char* args = strchr(line, ' ');
@@ -321,7 +357,7 @@ void handle(char* line) {
     } else if (strcmp(command, "off") == 0) {
         engine::note_off(static_cast<uint8_t>(atoi(args)));
     } else if (strcmp(command, "name") == 0) {
-        set_name(args);
+        set_name(g_edit, args);
         update_dirty();
         broadcast_state();
     } else if (strcmp(command, "load") == 0) {
@@ -409,7 +445,28 @@ void handle(char* line) {
 void poll_console() {
     static char line[112];
     static size_t length = 0;
+    // Nach `restore <bytes>` kommen so viele Bytes Sicherungsdatei, ohne Zeilenende.
+    static char* upload = nullptr;
+    static size_t upload_size = 0;
+    static size_t upload_filled = 0;
+    static uint32_t upload_since_ms = 0;
+
+    if (upload != nullptr && millis() - upload_since_ms > 10000) {
+        free(upload);
+        upload = nullptr;
+        notify("restore abgebrochen: nach 10 s erst " + String(upload_filled) + " Bytes");
+    }
     while (Serial.available() > 0) {
+        if (upload != nullptr) {
+            upload_filled += Serial.read(reinterpret_cast<uint8_t*>(upload) + upload_filled,
+                                         upload_size - upload_filled);
+            if (upload_filled == upload_size) {
+                restore_presets(upload, upload_size);
+                free(upload);
+                upload = nullptr;
+            }
+            continue;
+        }
         const char c = static_cast<char>(Serial.read());
         if (c == '\r') continue;
         if (c != '\n') {
@@ -425,6 +482,19 @@ void poll_console() {
             Serial.println();
         } else if (strcmp(line, "state") == 0) {
             Serial.println(state_message());
+        } else if (strcmp(line, "backup") == 0) {
+            presets::write_backup(Serial);
+            Serial.println();
+        } else if (strncmp(line, "restore ", 8) == 0) {
+            upload_size = strtoul(line + 8, nullptr, 10);
+            upload_filled = 0;
+            upload_since_ms = millis();
+            if (upload_size > 0 && upload_size <= presets::kMaxBackupSize) {
+                upload = static_cast<char*>(ps_malloc(upload_size));
+            }
+            if (upload == nullptr) {
+                notify("restore: 1 bis " + String(presets::kMaxBackupSize) + " Bytes erwartet");
+            }
         } else {
             handle(line);
         }
@@ -530,7 +600,7 @@ void setup() {
     const midifilter::Result panic = g_filter.panic();
     for (uint8_t i = 0; i < panic.count && g_thru; ++i) g_port.write(panic.events[i]);
 
-    web::begin(&on_web_command);
+    web::begin(&on_web_command, &restore_presets);
     controls::begin();
     Serial.printf("WLAN  \"%s\" / %s  ->  http://%s.local/  oder  http://%s/\n", web::kSsid,
                   web::kPassword, web::kHostname, WiFi.softAPIP().toString().c_str());

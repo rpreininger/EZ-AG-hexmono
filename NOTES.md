@@ -1,6 +1,6 @@
 # SID-Synth — Projektnotizen
 
-**Stand: 13.10.2026** — Branch `sid-synth`, gepusht (letzter Commit `ffe5db2`). Die
+**Stand: 13.10.2026** — Branch `sid-synth`, gepusht. Die
 Synth-Firmware läuft auf dem Board, der Editor ist auf dem iPhone getestet, Ton kommt
 bisher nur über „Ton im Browser". **Es wartet alles auf Hardware:** das DAC-Modul ist
 da und wird am **14.10.** gelötet, Kabel fehlen noch. **Die nächste Sitzung beginnt mit
@@ -15,8 +15,17 @@ Sitzung 13.10. in Kürze:
   Dupont-Buchse, 15 cm). Belegung in Schritt 2 und in der README.
 - USB-Audio-Interface statt DAC durchgesprochen, zurückgestellt (siehe unten). Später
   am Tag einen Yamaha AG06 MK2 angesteckt: an der nativen Buchse kam nur ein Hub an.
-- Das Board hing danach an **COM6**, und Windows meldete den CH340 als „funktioniert
-  nicht" — vor dem nächsten Flashen einmal ab- und wieder anstecken, Port neu nachsehen.
+- Das Board hing zwischendurch an **COM6**, und Windows meldete den CH340 als
+  „funktioniert nicht" — einmal ab- und wieder anstecken, Port neu nachsehen. Abends
+  war es wieder COM5.
+- **Presets hochladen:** im Editor „Presets aus Datei laden“ (`POST /api/restore`), an der
+  Konsole `backup` / `restore <bytes>`, dazu `tools/synth_presets.py`. Über die Konsole
+  auf dem Board geprüft, der Weg über WLAN noch nicht (siehe „Was fehlt“).
+- Fehler behoben: ein Name, der auf einen Umlaut endet, verlor seinen letzten Buchstaben
+  („Menü“ → „Men“). Die Kürzung steckt jetzt einmal in `params.cpp` (`set_name`).
+- Sicherung der Presets vom 13.10. (8 Plätze, eigene auf 1 und 2):
+  `D:\Developer\Arduino\SID\backup\sid-presets-2026-10-13.json`.
+- Plan für eine Mac-/iPad-App: [PORTIERUNG.md](PORTIERUNG.md).
 
 Technischer Aufbau, Verdrahtung und Befehle: [Firmware/README.md](Firmware/README.md),
 Abschnitt „Der eingebaute SID-Synth". Diese Datei hier ist Stand, Plan und Fallen.
@@ -52,8 +61,21 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
 - Regler-Logik über die Konsole (`turn`/`press`): Schrittweite, Zurückholen, Preset-Blättern,
   Belegung bleibt über Neustart
 - Filter-Firmware (`pio run`) baut nach dem Umbau weiterhin
+- Presets zurückspielen über die Konsole (`restore`, `tools/synth_presets.py`): nur
+  geänderte Plätze werden geschrieben (dieselbe Sicherung → „0 geladen, 8 unverändert“),
+  3 Plätze in 427 ms; Werte außerhalb des Bereichs begrenzt, unbekannte Schlüssel
+  übergangen, Platz doppelt → der letzte gilt; Editor folgt seinem Platz, ungespeicherte
+  Änderungen bleiben; kaputte Datei, `fmt` 2, leere Liste, zu groß → Meldung, nichts
+  geschrieben. JavaScript des Editors mit `node --check` geprüft.
 
 ## Was fehlt — nächste Schritte, in dieser Reihenfolge
+
+0. **Hochladen im Browser prüfen** (geht jederzeit, ohne neue Hardware), am iPhone im
+   WLAN „SID-Synth“: Einstellungen → „Alle Presets als Datei sichern“, dann „Presets aus
+   Datei laden“ mit genau dieser Datei → erwartet „0 Presets geladen, 8 unverändert“.
+   Danach einen Klang ändern, auf einem freien Platz speichern, sichern, Platz löschen,
+   Datei wieder laden → der Platz ist zurück. Der Firmen-PC kommt nicht ins WLAN, deshalb
+   ist dieser Weg (`on_restore_body` in `web.cpp`) noch ungeprüft.
 
 1. **DAC anschließen.** Foto von beiden Seiten des gelöteten Moduls ansehen, dann:
    - Lötbrücken, falls vorhanden: **FLT = L, DEMP = L, XSMT = H, FMT = L** (XSMT auf L = stumm)

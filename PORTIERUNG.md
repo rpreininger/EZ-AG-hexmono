@@ -1,6 +1,7 @@
 # SID-Synth auf macOS und iPadOS — Notizen für eine mögliche Portierung
 
-**Stand: 13.10.2026, nur Planung, nichts davon gebaut.** Ziel: Klänge am Mac oder iPad
+**Stand: 13.10.2026.** Die App ist nur geplant. Gebaut ist schon der Weg zur Box: Presets
+lassen sich über WLAN hochladen (siehe „Übertragen“). Ziel: Klänge am Mac oder iPad
 bauen, dort genauso hören wie aus der Box und dann 1:1 auf die Box übertragen.
 
 Grundlage ist der Stand auf Branch `sid-synth`. Wie die Box aufgebaut ist, steht in
@@ -113,34 +114,40 @@ Empfehlung: mit 1 anfangen.
 
 ## Übertragen zwischen App und Box
 
-**Heute gibt es nur die Richtung Box → Rechner:** `GET http://sid.local/api/backup` liefert
-alle belegten Plätze in einem Dokument:
+**Beide Richtungen gibt es seit dem 13.10. auf der Box,** in einem gemeinsamen Format.
+`GET http://sid.local/api/backup` liefert alle belegten Plätze in einem Dokument,
+`POST http://sid.local/api/restore` nimmt ein solches Dokument wieder an:
 
 ```json
 {"fmt":1,"presets":[{"slot":1,"fmt":1,"name":"Sägezahn-Lead","v":{…}}, …]}
 ```
 
-**Für die Richtung Rechner → Box gibt es drei Wege:**
+Mit allen 32 Plätzen hat es etwa 25 KB, angenommen werden bis 64 KB. Die Datei darf auch
+nur einzelne Plätze enthalten; Plätze, die nicht darin stehen, bleiben, wie sie sind. Die
+Box schreibt nur Plätze, die sich wirklich ändern, alle in einem Ausblenden (je Platz
+etwa 70–140 ms Stille). Das Ergebnis meldet sie als `msg` über den WebSocket, etwa
+„3 Presets geladen, 8 unverändert (427 ms)“. Die App braucht also nur diese beiden
+Adressen.
 
-1. **Neuer Endpunkt `POST /api/restore`** auf der Box, der genau dieses Dokument annimmt
-   und die Plätze schreibt. Dazu im Editor eine Schaltfläche „Presets laden“. Das ist der
-   Weg, den ich empfehle: ein Format für beide Richtungen, und es geht auch ohne App
-   vom Browser aus. Jeder Schreibvorgang braucht `while_muted` (66–99 ms je Platz,
-   NOTES.md, Diagnose-Falle 1). 32 Plätze bedeuten also gut drei Sekunden Stille — vorher ansagen.
-2. **Über die vorhandenen Befehle per WebSocket:** `name <text>`, dann `set <schlüssel>
-   <wert>` für jeden Parameter, dann `save <platz>`. Das geht ohne neue Firmware. Der Mac
-   oder das iPad muss dafür im WLAN „SID-Synth“ sein. Der Firmen-PC kommt da nicht
-   hinein, ein privater Mac oder das iPad schon.
-3. **Über die serielle Konsole**, mit denselben Befehlen. Mac mit USB-Kabel am Board, ohne
-   WLAN.
+**Wege von der App zur Box:**
+
+1. **Über WLAN mit `/api/restore`** — der Weg für die App. Mac oder iPad müssen dafür im
+   WLAN „SID-Synth“ sein. Der Firmen-PC kommt da nicht hinein, ein privater Mac oder das
+   iPad schon. Ohne App geht derselbe Weg im Editor: „Presets aus Datei laden“.
+2. **Über USB, ohne WLAN:** `Firmware/tools/synth_presets.py <port> backup|restore <datei>`,
+   gleiches Dateiformat. Auf der Konsole heißen die Befehle `backup` und
+   `restore <bytes>`; nach `restore` folgt die Datei roh.
+3. **Einzelne Werte per WebSocket:** `name <text>`, dann `set <schlüssel> <wert>` für jeden
+   Parameter, dann `save <platz>`. So ließe sich ein Klang in der App live auf der Box
+   mithören, während man ihn baut.
 
 **Fallen dabei:**
 
 - **Platznummern:** Befehle zählen ab 0 (`load 0` … `load 31`), das Backup und die Anzeige
   ab 1 (`"slot":1`). Beim Umsetzen eins abziehen.
 - **Name:** höchstens 23 Byte UTF-8. Die Box kürzt längere Namen und schneidet dabei kein
-  Zeichen durch (`set_name()`). Die App sollte genauso kürzen, sonst heißt das Preset auf
-  der Box anders.
+  Zeichen durch (`set_name()` in `params.cpp`). Die App sollte genauso kürzen, sonst
+  heißt das Preset auf der Box anders.
 - **Wertebereiche:** Die Box begrenzt jeden Wert auf min/max aus `params.h`. Die App muss
   dieselben Grenzen nehmen, sonst klingt ein Wert außerhalb dort anders.
 - **Neue Parameter:** immer als neue Zeile in `params.h`, nie Schlüssel umbenennen oder
@@ -194,11 +201,11 @@ anschließen. Möglich sind diese Wege:
 2. Am Mac ein kleines Kommandozeilenprogramm: Preset-JSON plus Notenfolge rein, WAV raus.
    Daran die Gleichheit mit der Box prüfen: die Box über die AG06 MK2 aufnehmen und
    neben das WAV legen.
-3. Firmware: `POST /api/restore` und die Schaltfläche im Editor.
+3. ~~Firmware: `POST /api/restore` und die Schaltfläche im Editor~~ — erledigt am 13.10.
 4. App für den Mac: `SIDEngine`-Paket, AVAudioEngine, CoreMIDI, Web-Editor in der
    `WKWebView`.
 5. Dieselbe App auf dem iPad (Hintergrund-Audio ist im Projekt schon eingetragen).
 6. Wenn gewünscht: AUv3.
 
-Grobe Schätzung, ungeprüft: Schritte 1–3 etwa zwei Tage, die App für Mac und iPad mit
+Grobe Schätzung, ungeprüft: Schritte 1–2 etwa zwei Tage, die App für Mac und iPad mit
 dem Web-Editor noch einmal zwei bis drei Tage.

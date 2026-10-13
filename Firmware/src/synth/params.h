@@ -165,6 +165,10 @@ struct Patch {
     }
 };
 
+/// Übernimmt den Namen ohne Steuerzeichen und kürzt ihn auf das Namensfeld, ohne ein
+/// UTF-8-Zeichen zu zerschneiden.
+void set_name(Patch& patch, const char* text);
+
 /// Alle Werte auf die Voreinstellung.
 void init_patch(Patch& patch, const char* name);
 

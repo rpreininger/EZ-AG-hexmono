@@ -27,7 +27,9 @@ AsyncWebServer g_server(80);
 AsyncWebSocket g_ws("/ws");
 QueueHandle_t g_inbox = nullptr;
 CommandHandler g_handler = nullptr;
+RestoreHandler g_restore = nullptr;
 std::atomic<uint32_t> g_listener{0};  // WebSocket-Client, der den Ton hören will; 0 = keiner
+std::atomic<char*> g_upload{nullptr};  // hochgeladene Sicherung auf dem Weg zu loop()
 
 void enqueue(const char* text, size_t length) {
     Line line;
@@ -102,6 +104,36 @@ void preview_task(void*) {
     }
 }
 
+// MARK: - Sicherung hochladen
+
+/// Der Rumpf kommt in Stücken. Gesammelt wird im PSRAM; den Puffer gibt der Webserver
+/// mit der Anfrage wieder frei, es sei denn, on_restore() hat ihn an loop() weitergereicht.
+void on_restore_body(AsyncWebServerRequest* request, uint8_t* data, size_t length, size_t index,
+                     size_t total) {
+    if (index == 0 && total > 0 && total <= presets::kMaxBackupSize) {
+        request->_tempObject = ps_calloc(total + 1, 1);  // mit Nullbyte am Ende
+    }
+    if (request->_tempObject != nullptr && index + length <= total) {
+        memcpy(static_cast<char*>(request->_tempObject) + index, data, length);
+    }
+}
+
+/// Antwortet gleich; das Ergebnis meldet loop() über den WebSocket als `msg`.
+void on_restore(AsyncWebServerRequest* request) {
+    char* text = static_cast<char*>(request->_tempObject);
+    if (text == nullptr) {
+        request->send(413, "text/plain", "Datei leer oder größer als 64 KB");
+        return;
+    }
+    char* idle = nullptr;
+    if (!g_upload.compare_exchange_strong(idle, text)) {
+        request->send(409, "text/plain", "Es wird gerade schon eine Datei geladen");
+        return;
+    }
+    request->_tempObject = nullptr;  // gehört jetzt loop()
+    request->send(202, "text/plain", "Presets werden geladen …");
+}
+
 // MARK: - Schema
 
 void print_string(Print& out, const char* text) {
@@ -156,8 +188,9 @@ void write_schema(Print& out) {
     out.print("]}");
 }
 
-void begin(CommandHandler handler) {
+void begin(CommandHandler handler, RestoreHandler restore) {
     g_handler = handler;
+    g_restore = restore;
     g_inbox = xQueueCreate(32, sizeof(Line));
 
     WiFi.mode(WIFI_AP);
@@ -184,6 +217,7 @@ void begin(CommandHandler handler) {
         presets::write_backup(*out);
         request->send(out);
     });
+    g_server.on("/api/restore", HTTP_POST, on_restore, nullptr, on_restore_body);
     // Handys fragen beim Verbinden allerlei Adressen ab — alles auf den Editor lenken.
     g_server.onNotFound([](AsyncWebServerRequest* request) { request->redirect("/"); });
     g_server.begin();
@@ -194,6 +228,13 @@ void begin(CommandHandler handler) {
 void poll() {
     Line line;
     while (xQueueReceive(g_inbox, &line, 0) == pdTRUE) g_handler(line.text);
+
+    char* upload = g_upload.load();
+    if (upload != nullptr) {
+        g_restore(upload, strlen(upload));
+        g_upload.store(nullptr);  // erst jetzt darf die nächste Datei kommen
+        free(upload);
+    }
 
     static uint32_t next_cleanup_ms = 0;
     if (static_cast<int32_t>(millis() - next_cleanup_ms) >= 0) {

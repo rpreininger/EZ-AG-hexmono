@@ -2,6 +2,7 @@
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include <esp_heap_caps.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -161,6 +162,15 @@ void fill(JsonDocument& doc, const Patch& patch) {
 
 /// Unbekannte Schlüssel werden übergangen, fehlende behalten die Voreinstellung — so
 /// bleiben alte Dateien lesbar, wenn Parameter dazukommen.
+void from_json(JsonObjectConst object, Patch& patch) {
+    init_patch(patch, object["name"] | "Ohne Namen");
+    JsonObjectConst values = object["v"].as<JsonObjectConst>();
+    for (size_t i = 0; i < kParamCount; ++i) {
+        JsonVariantConst value = values[kParams[i].key];
+        if (value.is<int>()) patch.values[i] = clamp_value(i, value.as<int>());
+    }
+}
+
 bool read_file(const char* path, Patch& patch) {
     File file = LittleFS.open(path, "r");
     if (!file) return false;
@@ -168,15 +178,20 @@ bool read_file(const char* path, Patch& patch) {
     const DeserializationError error = deserializeJson(doc, file);
     file.close();
     if (error) return false;
-
-    init_patch(patch, doc["name"] | "Ohne Namen");
-    JsonObjectConst values = doc["v"].as<JsonObjectConst>();
-    for (size_t i = 0; i < kParamCount; ++i) {
-        JsonVariantConst value = values[kParams[i].key];
-        if (value.is<int>()) patch.values[i] = clamp_value(i, value.as<int>());
-    }
+    from_json(doc.as<JsonObjectConst>(), patch);
     return true;
 }
+
+/// Eine volle Sicherung braucht beim Lesen einige zehn KB. Die gehören in den PSRAM, nicht
+/// in den knappen internen Speicher, den WLAN und Webserver brauchen.
+struct PsramAllocator : ArduinoJson::Allocator {
+    void* allocate(size_t size) override { return heap_caps_malloc(size, MALLOC_CAP_SPIRAM); }
+    void deallocate(void* pointer) override { heap_caps_free(pointer); }
+    void* reallocate(void* pointer, size_t size) override {
+        return heap_caps_realloc(pointer, size, MALLOC_CAP_SPIRAM);
+    }
+};
+PsramAllocator g_psram;
 
 }  // namespace
 
@@ -269,6 +284,25 @@ void write_backup(Print& out) {
         serializeJson(doc, out);
     }
     out.print("]}");
+}
+
+int read_backup(const char* text, size_t length, Patch (&patches)[kSlots],
+                bool (&found)[kSlots]) {
+    for (bool& f : found) f = false;
+    JsonDocument doc(&g_psram);
+    if (deserializeJson(doc, text, length) || (doc["fmt"] | 1) != 1) return -1;
+    JsonArrayConst entries = doc["presets"].as<JsonArrayConst>();
+    if (entries.isNull()) return -1;
+
+    int count = 0;
+    for (JsonObjectConst entry : entries) {
+        const int slot = (entry["slot"] | 0) - 1;
+        if (slot < 0 || slot >= kSlots || !entry["v"].is<JsonObjectConst>()) continue;
+        from_json(entry, patches[slot]);
+        if (!found[slot]) ++count;
+        found[slot] = true;  // kommt ein Platz zweimal vor, gilt der letzte
+    }
+    return count;
 }
 
 }  // namespace presets

@@ -41,5 +41,14 @@ size_t write_json(Print& out, const Patch& patch);
 /// Alle belegten Plätze als ein JSON-Dokument, zum Sichern auf dem Rechner.
 void write_backup(Print& out);
 
+/// Größte Sicherungsdatei, die angenommen wird. Eine mit allen 32 Plätzen hat etwa 25 KB.
+constexpr size_t kMaxBackupSize = 64 * 1024;
+
+/// Liest ein Dokument im Format von write_backup(); die Plätze darin zählen ab 1. Jeder
+/// gültige Eintrag landet in `patches`, und `found` wird für seinen Platz gesetzt.
+/// Liefert die Anzahl der gefundenen Plätze, oder -1, wenn das Dokument nicht lesbar ist.
+int read_backup(const char* text, size_t length, Patch (&patches)[kSlots],
+                bool (&found)[kSlots]);
+
 }  // namespace presets
 }  // namespace synth

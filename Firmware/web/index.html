@@ -14,6 +14,9 @@
     vom Gerät      state <json> · set <key> <wert> <geändert 0|1> · stat <json> ·
                    pong <t> · msg <text>
                    und, solange „Ton im Browser" an ist, binäre PCM-Blöcke
+
+  Über HTTP: GET /api/schema · GET /api/backup (alle Presets) · POST /api/restore (eine
+  solche Sicherung zurück; das Ergebnis kommt als msg über den WebSocket)
 -->
 <html lang="de">
 <head>
@@ -240,7 +243,9 @@ function settings(main) {
     <p id="enc" class="muted"></p>
     <div class="bar"><button id="init">Neuer Klang</button><button id="revert">Änderungen verwerfen</button></div>
     <div class="bar"><button id="erase">Eigenen Klang auf diesem Platz löschen</button></div>
-    <p><a href="/api/backup" download="sid-presets.json">Alle Presets als Datei sichern</a></p>`);
+    <p><a href="/api/backup" download="sid-presets.json">Alle Presets als Datei sichern</a></p>
+    <div class="bar"><button id="restore">Presets aus Datei laden</button></div>
+    <input type="file" id="file" accept=".json,application/json" hidden>`);
   $('thru').onchange = e => cmd('thru ' + (e.target.checked ? 1 : 0));
   $('ezag').onchange = e => cmd('ezag ' + (e.target.checked ? 1 : 0));
   for (const n of [1, 2, 3]) {
@@ -256,6 +261,26 @@ function settings(main) {
       cmd('erase ' + st.slot);
     }
   };
+  $('restore').onclick = () => $('file').click();
+  $('file').onchange = e => { const file = e.target.files[0]; e.target.value = ''; if (file) restore(file); };
+}
+
+// Eine Sicherung wie von „Alle Presets als Datei sichern“. Das Gerät schreibt nur Plätze,
+// die sich ändern, und meldet das Ergebnis als msg.
+async function restore(file) {
+  const text = await file.text();
+  let slots = [];
+  try { slots = JSON.parse(text).presets.map(p => p.slot).filter(s => s >= 1 && s <= schema.slots); }
+  catch (e) { /* unten gemeldet */ }
+  if (!slots.length) { toast('Keine Presets in der Datei – erwartet wird eine Sicherung von hier.'); return; }
+  const own = slots.filter(s => st.own[s - 1]);
+  if (!confirm(`${slots.length === 1 ? 'Ein Preset' : slots.length + ' Presets'} aus „${file.name}“ laden?` +
+      (own.length ? `\nÜberschreibt eigene Klänge auf Platz ${own.join(', ')}.` : '') +
+      '\nDer Ton setzt dabei bis zu drei Sekunden aus.')) return;
+  try {
+    const r = await fetch('/api/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: text });
+    toast(await r.text());
+  } catch (e) { toast('Hochladen fehlgeschlagen – noch mit dem SID-Synth verbunden?'); }
 }
 
 // MARK: Zustand vom Gerät

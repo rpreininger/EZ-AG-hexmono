@@ -158,14 +158,17 @@ haben Werksklänge; ein eigener Klang auf einem dieser Plätze überdeckt den We
 er gelöscht wird. Gespeichert wird nur auf Knopfdruck, und vorher wird ausgeblendet:
 jeder Schreibzugriff auf den Flash hält beide Kerne bis zu 40 ms an, länger als der
 Ausgabepuffer (11,6 ms) reicht. „Alle Presets als Datei sichern" im Editor lädt eine
-JSON-Datei mit allen Klängen herunter.
+JSON-Datei mit allen Klängen herunter, „Presets aus Datei laden" spielt so eine Datei
+wieder ein (`POST /api/restore`). Geschrieben werden nur Plätze, die sich ändern; Plätze,
+die nicht in der Datei stehen, bleiben. Der Ton setzt dabei kurz aus, bei einer vollen
+Datei bis zu drei Sekunden.
 
 | Datei | Inhalt |
 | --- | --- |
 | `src/synth/params.h` | **die eine Parametertabelle** — Engine, Presets und Editor lesen sie; ein neuer Parameter ist eine Zeile |
 | `src/synth/engine.*` | reSID, Modulation, I2S, Ein-/Ausblenden, Vorhör-Puffer |
 | `src/synth/presets.*` | Plätze, Werksklänge, JSON lesen und schreiben |
-| `src/synth/web.*` | WLAN-Zugangspunkt, Webserver, WebSocket, `/api/schema`, `/api/backup` |
+| `src/synth/web.*` | WLAN-Zugangspunkt, Webserver, WebSocket, `/api/schema`, `/api/backup`, `/api/restore` |
 | `src/synth/controls.*` | das Encoder-Board am I2C, in einer eigenen Aufgabe auf Kern 0 |
 | `src/synth/synth_main.cpp` | Zustand des Editors, Befehle, MIDI vom Filter zur Engine |
 | `web/index.html` | der Editor; `tools/embed_web.py` packt ihn beim Bauen in die Firmware |
@@ -175,8 +178,10 @@ JSON-Datei mit allen Klängen herunter.
 Prüfen ohne WLAN: `on 57 100`, `off 57`, `set f.cut 400`, `load 2`, `save 31`, `stat`,
 `peak`, `dump`, `schema`, `state`, `miditrace 1`. Alle fünf Sekunden kommt eine
 Statuszeile. Nur an der Konsole: `usb` gibt Geschwindigkeit und rohe Deskriptoren des
-Geräts an der nativen USB-Buchse aus. `tools/synth_console.py` schickt Befehle, ohne das Board neu zu starten;
-`tools/synth_check.py` ist ein Selbsttest über die Konsole.
+Geräts an der nativen USB-Buchse aus; `backup` gibt alle Presets aus, `restore <bytes>`
+nimmt danach so viele Bytes Sicherungsdatei an. `tools/synth_console.py` schickt Befehle,
+ohne das Board neu zu starten; `tools/synth_presets.py` sichert und spielt Presets über
+USB zurück, ohne WLAN; `tools/synth_check.py` ist ein Selbsttest über die Konsole.
 
 **Lizenz:** reSID steht unter der GPL. Wer die Synth-Firmware weitergibt, muss deshalb
 auch den Quelltext unter der GPL weitergeben. Die Filter-Box ohne Synth ist davon nicht
