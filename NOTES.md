@@ -1,9 +1,22 @@
 # SID-Synth — Projektnotizen
 
-**Stand: 12.10.2026** — Branch `sid-synth`, gepusht. Die Synth-Firmware läuft auf dem
-Board, der Editor ist auf dem iPhone getestet, Ton kommt bisher nur über „Ton im
-Browser". **Es wartet alles auf Hardware:** das DAC-Modul ist bestellt und wird gelötet,
-Kabel fehlen noch.
+**Stand: 13.10.2026** — Branch `sid-synth`, gepusht (letzter Commit `ffe5db2`). Die
+Synth-Firmware läuft auf dem Board, der Editor ist auf dem iPhone getestet, Ton kommt
+bisher nur über „Ton im Browser". **Es wartet alles auf Hardware:** das DAC-Modul ist
+da und wird am **14.10.** gelötet, Kabel fehlen noch. **Die nächste Sitzung beginnt mit
+dem gelöteten DAC** — zuerst Fotos von beiden Seiten des Moduls ansehen (Schritt 1 unten).
+Der USB-Audio-Weg ist damit vom Tisch (AG06 MK2, siehe unten).
+
+Sitzung 13.10. in Kürze:
+- Anschluss des Encoder-Boards geklärt, Foto der Rückseite liegt unter
+  `D:\Developer\Arduino\SID\snap\rotary.jpg`: zwei gleichwertige STEMMA-QT-Buchsen
+  links und rechts, die Lochreihen bleiben leer, die Adress-Lötpunkte nicht anfassen.
+  Das DevKitC hat keine STEMMA-QT-Buchse → Kabel Adafruit 4397 (STEMMA QT auf
+  Dupont-Buchse, 15 cm). Belegung in Schritt 2 und in der README.
+- USB-Audio-Interface statt DAC durchgesprochen, zurückgestellt (siehe unten). Später
+  am Tag einen Yamaha AG06 MK2 angesteckt: an der nativen Buchse kam nur ein Hub an.
+- Das Board hing danach an **COM6**, und Windows meldete den CH340 als „funktioniert
+  nicht" — vor dem nächsten Flashen einmal ab- und wieder anstecken, Port neu nachsehen.
 
 Technischer Aufbau, Verdrahtung und Befehle: [Firmware/README.md](Firmware/README.md),
 Abschnitt „Der eingebaute SID-Synth". Diese Datei hier ist Stand, Plan und Fallen.
@@ -62,7 +75,9 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
 5. Danach: Pull Request `sid-synth` → `main`.
 
 Ideen für später: dreistimmiger Modus (eine SID-Stimme je Note), zweiter SID für
-Stereo, 96 kHz gegen Aliasing in hohen Lagen (Last 26 %), Tab5-Port.
+Stereo, 96 kHz gegen Aliasing in hohen Lagen (Last 26 %), Tab5-Port. App für macOS und
+iPadOS, um Presets dort zu bauen und 1:1 auf die Box zu übertragen: geplant in
+[PORTIERUNG.md](PORTIERUNG.md).
 
 **USB-Audio-Interface statt DAC (13.10., zurückgestellt — mehr dagegen als dafür):**
 Test mit dem vorhandenen Steinberg UR22mkII (Audio + MIDI-DIN) wäre möglich, unterbleibt
@@ -72,6 +87,14 @@ die native USB-Buchse des ESP32 statt des C2MIDI, eigene Versorgung über seine
 (12 Mbit/s), UAC1 oder UAC2? Die MIDI-Schnittstelle könnte die jetzige Firmware schon
 beanspruchen. Für Audio bräuchte es Arduino 3 / IDF 5 und eine Engine, deren Takt der
 USB vorgibt statt I2S — mehrere Tage Arbeit.
+
+Erster Blick am 13.10. mit einem **Yamaha AG06 MK2** (laut Yamaha UAC2) an der nativen
+Buchse, Konsolenbefehl `usb` (neu): es meldete sich **nur ein Hub**, VID 0424 / PID 2422
+(Microchip USB2422, zwei Ports, „self-powered"), im Full-Speed-Modus. Steckt der AG06
+direkt am Board, sitzt der Hub in ihm selbst — noch offen. Das Audiogerät dahinter sieht
+der S3 nicht: Arduino 2.0.17 / IDF 4.4 kennt keine Hubs, erst neuere IDF-Versionen mit
+`CONFIG_USB_HOST_HUBS_SUPPORTED` — und auch dann nur Geräte mit derselben
+Geschwindigkeit wie der Hub, hier also Full Speed.
 
 ## Noch zu besorgen
 
@@ -126,7 +149,10 @@ Der COM-Port wechselt je nach USB-Buchse (13.10. war es COM6) — nachsehen mit
 7. **COM5 belegt** → Upload scheitert. Erst jeden laufenden Mitschnitt beenden.
 8. **Der Firmen-PC kommt nicht ins SID-WLAN** (Internet über USB-LAN, WLAN-Adapter frei,
    aber nicht verbunden) — Tests im Browser übers iPhone.
-9. **`LittleFS.exists()` schreibt für jede fehlende Datei einen Fehler** auf die Konsole;
+9. **`"usb":true` heißt nicht „MIDI-Gerät da"** — findet `USBConnection` keine
+   MIDI-Streaming-Schnittstelle, liest es auf gut Glück Endpunkt 0x81 und meldet sich
+   trotzdem bereit. So stand es auch bei einem Hub. Was wirklich dran ist, zeigt `usb`.
+10. **`LittleFS.exists()` schreibt für jede fehlende Datei einen Fehler** auf die Konsole;
    deshalb liest `presets::begin()` einmal das Verzeichnis.
 
 ## Messwerte
