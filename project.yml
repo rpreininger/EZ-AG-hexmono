@@ -55,6 +55,7 @@ targets:
     sources:
       - path: SIDSynth/App
       - path: SIDSynth/Core
+        excludes: [compile_flags.txt]  # nur für den Editor (clangd)
       - path: Firmware/lib/reSID/src
       - path: Firmware/src/synth/params.cpp
       - path: Firmware/src/synth/engine_core.cpp
@@ -104,4 +105,5 @@ targets:
         # Fürs iPad: das Entwicklerkonto (Team) in Xcode → Einstellungen → Accounts.
         "DEVELOPMENT_TEAM[sdk=iphoneos*]": PRM2DDW7M5
         TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon  # SIDSynth/Icon/make_icon.swift
         ENABLE_USER_SCRIPT_SANDBOXING: NO
