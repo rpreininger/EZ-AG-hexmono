@@ -101,7 +101,7 @@ targets:
         GCC_WARN_INHIBIT_ALL_WARNINGS: NO
         CODE_SIGN_STYLE: Automatic
         "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
-        # Fürs iPad: das Entwicklerzertifikat auf diesem Mac.
-        "DEVELOPMENT_TEAM[sdk=iphoneos*]": 6R26PD6ZLD
+        # Fürs iPad: das Entwicklerkonto (Team) in Xcode → Einstellungen → Accounts.
+        "DEVELOPMENT_TEAM[sdk=iphoneos*]": PRM2DDW7M5
         TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
