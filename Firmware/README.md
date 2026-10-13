@@ -174,7 +174,8 @@ JSON-Datei mit allen Klängen herunter.
 **Serielle Konsole** (115200 Baud) versteht dieselben Befehle wie der Browser, zum
 Prüfen ohne WLAN: `on 57 100`, `off 57`, `set f.cut 400`, `load 2`, `save 31`, `stat`,
 `peak`, `dump`, `schema`, `state`, `miditrace 1`. Alle fünf Sekunden kommt eine
-Statuszeile.
+Statuszeile. `tools/synth_console.py` schickt Befehle, ohne das Board neu zu starten;
+`tools/synth_check.py` ist ein Selbsttest über die Konsole.
 
 **Lizenz:** reSID steht unter der GPL. Wer die Synth-Firmware weitergibt, muss deshalb
 auch den Quelltext unter der GPL weitergeben. Die Filter-Box ohne Synth ist davon nicht
@@ -199,10 +200,16 @@ häufigste Ursache für „kommt nichts raus". Der Ausgang ist Line-Pegel.
 ```
 Encoder-Board (STEMMA QT)   ESP32-S3
   rot   (3V3) ─────────────── 3V3   (nicht 5 V)
-  schwarz (GND) ───────────── GND
+  schwarz (GND) ───────────── GND   (rechte Leiste; das GND links unten braucht der DAC)
   blau  (SDA) ─────────────── GPIO 8
   gelb  (SCL) ─────────────── GPIO 9
 ```
+
+Das DevKitC hat keine STEMMA-QT-Buchse, nur Stifte. Dazwischen gehört ein Kabel
+STEMMA QT auf Dupont-Buchse (Adafruit 4397). Welche der beiden weißen Buchsen am
+Encoder-Board es nimmt, ist egal; die andere bleibt für ein OLED frei. Das Board
+verträgt auch 5 V, zieht SDA und SCL dann aber auf 5 V hoch, und das halten die Pins des
+ESP32 nicht aus.
 
 **Encoder-Board:** der Adafruit I2C Quad Rotary Encoder („NeoRotary 4", Produkt 5752)
 aus dem Chromakey-Controller, angesteuert genau wie dort. Regler 1–3 verstellen je einen
