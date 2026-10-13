@@ -75,11 +75,12 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
     """
 
     /// „Ton im Browser" braucht es nicht, der Ton kommt direkt aus dem Mac. Das
-    /// Encoder-Board gibt es am Mac auch nicht.
+    /// Encoder-Board gibt es am Mac auch nicht, und die App sendet kein MIDI — also auch
+    /// kein „Noten auch an MIDI OUT".
     static let appStyle = """
     (() => {
       const style = document.createElement('style');
-      style.textContent = '#snd, #enc { display: none !important; }';
+      style.textContent = '#snd, #enc, .row:has(#thru) { display: none !important; }';
       document.head.appendChild(style);
     })();
     """

@@ -229,7 +229,8 @@ final class SynthController {
         case "panic":
             sid_all_notes_off()
         case "thru":
-            // Auf dem Mac gibt es kein MIDI OUT; der Schalter wird nur gemerkt.
+            // Die App sendet kein MIDI. Der Schalter ist im Editor ausgeblendet und wird
+            // nur gemerkt, damit der Zustand dieselbe Form hat wie auf der Box.
             thru = atoi(Substring(args)) != 0
             defaults.set(thru, forKey: "thru")
             broadcastState()

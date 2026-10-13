@@ -26,8 +26,9 @@ make synth-test   # Klangerzeugung + Übertragen prüfen, ohne Xcode und ohne Bo
   `/api/backup` und `POST /api/restore` beantwortet ein Scheme-Handler genau wie die Box
   (`restore_presets()`: nur geänderte Plätze schreiben, der Editor folgt seinem Platz),
   der WebSocket ist durch eine Brücke ersetzt. Ausgeblendet sind nur „Ton im Browser“ und der Hinweis zum Encoder-Board.
-- **MIDI:** alle Eingänge werden verbunden, wie an der Box. Program Change wählt den
-  Platz, der EZ-AG-Filter ist in den Einstellungen zuschaltbar.
+- **MIDI:** alle Eingänge werden verbunden, wie an der Box, auch der C2MIDI Pro.
+  Program Change wählt den Platz, der EZ-AG-Filter ist in den Einstellungen zuschaltbar.
+  **Die App sendet kein MIDI** — „Noten auch an MIDI OUT“ ist in ihr ausgeblendet.
 - **Presets:** 32 Plätze in `~/Library/Application Support/SIDSynth/Presets`, je eine
   `patch-NN.json` im Format der Box, Werksklänge wie auf der Box.
 - **Box-Menü:** Presets von der Box holen (`GET /api/backup`), diesen Klang oder alle
