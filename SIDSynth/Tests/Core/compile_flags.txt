@@ -1,0 +1,6 @@
+-std=c++17
+-DRESID_ENABLE_INTERPOLATE
+-I../../../Firmware/lib/reSID/src
+-I../../../Firmware/src/synth
+-I../../../Firmware/src
+-I../../../SIDSynth/Core

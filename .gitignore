@@ -9,5 +9,6 @@ Packages/MidiFilterCore/.swiftpm/
 
 # Von xcodegen aus project.yml erzeugt, siehe `make project`.
 MidiFilter.xcodeproj/
+SIDSynth/Info.plist
 
 .DS_Store

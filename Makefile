@@ -1,6 +1,6 @@
 APP := build/Build/Products/Debug/MidiFilter.app
 
-.PHONY: project build run test clean demo demo-loop firmware-test
+.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run
 
 project:
 	xcodegen generate
@@ -32,3 +32,34 @@ firmware-test:
 	clang++ -std=c++17 -Wall -Wextra -O1 -fno-exceptions -fno-rtti \
 	        Firmware/src/midi_filter.cpp Firmware/src/midi_event.cpp Firmware/test/test_firmware.cpp -o build/fwtest
 	./build/fwtest
+
+# Die Klangerzeugung der Box (reSID, engine_core, Werksklänge) auf dem Mac geprüft.
+SYNTH_SRC := $(wildcard Firmware/lib/reSID/src/*.cc) \
+             Firmware/src/synth/params.cpp Firmware/src/synth/engine_core.cpp \
+             Firmware/src/synth/factory.cpp Firmware/src/midi_filter.cpp \
+             Firmware/src/midi_event.cpp SIDSynth/Core/sid_host.cpp
+SYNTH_INC := -IFirmware/lib/reSID/src -IFirmware/src/synth -IFirmware/src -ISIDSynth/Core
+
+synth-test:
+	@mkdir -p build
+	clang++ -std=c++17 -O2 -Wall -Wextra -DRESID_ENABLE_INTERPOLATE $(SYNTH_INC) \
+	        $(SYNTH_SRC) SIDSynth/Tests/Core/core_test.cpp -o build/synthtest
+	./build/synthtest
+	@mkdir -p build/synthobj
+	cd build/synthobj && clang++ -std=c++17 -O2 -c -DRESID_ENABLE_INTERPOLATE \
+	        $(addprefix -I../../,$(subst -I,,$(SYNTH_INC))) $(addprefix ../../,$(SYNTH_SRC))
+	swiftc -O -import-objc-header SIDSynth/Core/sid_host.h -lc++ \
+	       SIDSynth/App/Patch.swift SIDSynth/App/BoxLink.swift SIDSynth/App/PresetStore.swift \
+	       SIDSynth/App/SynthController.swift SIDSynth/Tests/BoxLinkTest/main.swift \
+	       build/synthobj/*.o -o build/boxlinktest
+	./build/boxlinktest
+
+# Die Mac-App für Presets: dieselbe Klangerzeugung, derselbe Editor wie auf der Box.
+SYNTH_APP := build/Build/Products/Debug/SIDSynth.app
+
+synth-run: project
+	xcodebuild -project MidiFilter.xcodeproj -scheme SIDSynth \
+	           -destination 'platform=macOS' -configuration Debug \
+	           -derivedDataPath build build
+	@pkill -x SIDSynth || true
+	open $(SYNTH_APP)

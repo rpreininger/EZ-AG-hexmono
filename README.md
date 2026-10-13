@@ -14,6 +14,8 @@ make run             # generiert das Projekt, baut und startet die App
 make test            # Unit-Tests der Filterlogik (ohne Xcode, ohne Hardware)
 make demo            # simulierte EZ-AG gegen die laufende App, kein Instrument nötig
 make firmware-test   # Tests der ESP32-Portierung, auf dem Rechner
+make synth-run       # SID-Synth am Mac: Presets bauen, siehe PORTIERUNG.md
+make synth-test      # Klangerzeugung der Box und Übertragen, auf dem Rechner
 ```
 
 Ohne `make`:
@@ -40,6 +42,7 @@ Sources/MIDI/                CoreMIDI (läuft auf macOS und iOS)
 Sources/App/                 SwiftUI
 Firmware/                    ESP32-S3: dieselbe Logik in C++, siehe Firmware/README.md
 Tools/                       midi-capture.swift, fake-ezag.swift
+SIDSynth/                    Mac-App für Presets: Klangerzeugung + Editor der Box
 ```
 
 Die App legt immer zwei virtuelle Ports an:

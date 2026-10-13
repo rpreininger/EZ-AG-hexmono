@@ -46,3 +46,45 @@ targets:
           CODE_SIGN_IDENTITY: "-"
         Release:
           CODE_SIGN_IDENTITY: "-"
+
+  # Die Mac-App für Presets: übersetzt die Klangerzeugung der Box (reSID, engine_core,
+  # Werksklänge, Schema, EZ-AG-Filter) und zeigt deren Web-Editor. Siehe PORTIERUNG.md.
+  SIDSynth:
+    type: application
+    platform: macOS
+    sources:
+      - path: SIDSynth/App
+      - path: SIDSynth/Core
+      - path: Firmware/lib/reSID/src
+      - path: Firmware/src/synth/params.cpp
+      - path: Firmware/src/synth/engine_core.cpp
+      - path: Firmware/src/synth/factory.cpp
+      - path: Firmware/src/midi_filter.cpp
+      - path: Firmware/src/midi_event.cpp
+      - path: Firmware/web/index.html
+        buildPhase: resources
+    info:
+      path: SIDSynth/Info.plist
+      properties:
+        CFBundleDisplayName: SID-Synth
+        LSApplicationCategoryType: public.app-category.music
+        # Die Box spricht nur http:// und ws:// in ihrem eigenen WLAN.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: Zum Holen und Übertragen der Presets über das WLAN der Box.
+    settings:
+      base:
+        PRODUCT_NAME: SIDSynth
+        PRODUCT_BUNDLE_IDENTIFIER: de.ralfpreininger.SIDSynth
+        SWIFT_OBJC_BRIDGING_HEADER: SIDSynth/Core/SIDSynth-Bridging-Header.h
+        HEADER_SEARCH_PATHS: >-
+          $(SRCROOT)/Firmware/lib/reSID/src $(SRCROOT)/Firmware/src/synth
+          $(SRCROOT)/Firmware/src $(SRCROOT)/SIDSynth/Core
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "RESID_ENABLE_INTERPOLATE"]
+        # reSID muss auch im Debug-Build in Echtzeit laufen.
+        GCC_OPTIMIZATION_LEVEL: "2"
+        GCC_WARN_INHIBIT_ALL_WARNINGS: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO

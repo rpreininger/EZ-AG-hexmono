@@ -1,8 +1,52 @@
 # SID-Synth auf macOS und iPadOS — Notizen für eine mögliche Portierung
 
-**Stand: 13.10.2026.** Die App ist nur geplant. Gebaut ist schon der Weg zur Box: Presets
-lassen sich über WLAN hochladen (siehe „Übertragen“). Ziel: Klänge am Mac oder iPad
-bauen, dort genauso hören wie aus der Box und dann 1:1 auf die Box übertragen.
+**Stand: 13.10.2026 abends — die Mac-App läuft** (Schritte 1, 2 und 4 unten, Schritt 1
+nur am Rechner geprüft, noch nicht auf dem Board). Ziel: Klänge am Mac oder iPad bauen,
+dort genauso hören wie aus der Box und dann 1:1 auf die Box übertragen.
+
+## Was gebaut ist
+
+```sh
+make synth-run    # App bauen und starten
+make synth-test   # Klangerzeugung + Übertragen prüfen, ohne Xcode und ohne Box
+```
+
+- **Firmware umgebaut, ohne Änderung am Klang:** `engine_core.h/.cpp` enthält die
+  Klangrechnung (aus `engine.cpp` herausgelöst, der Code ist Zeile für Zeile derselbe),
+  `factory.cpp` die Werksklänge, `schema.h` das Schema für den Editor. `engine.cpp` ist
+  nur noch die ESP32-Hülle. Beide Firmwares
+  (`pio run`, `pio run -e synth`) bauen. **Noch offen:** auf dem Board mit
+  `tools/synth_check.py` prüfen, dass Pegel (20–47 %) und Last (14–16 %) gleich bleiben.
+- **App `SIDSynth`** (Target in `project.yml`, Quellen in `SIDSynth/`): übersetzt
+  reSID, `engine_core`, `params`, `factory`, `midi_filter` direkt aus `Firmware/`.
+  `SIDSynth/Core/sid_host.cpp` ist die Hülle (Warteschlange, 128er-Blöcke im
+  Audio-Callback, Lastmessung, MIDI wie `play()` der Box), `SynthController.swift`
+  versteht dieselben Befehle wie `handle()` in `synth_main.cpp`.
+- **Editor:** `Firmware/web/index.html` unverändert in einer WKWebView. `/api/schema`,
+  `/api/backup` und `POST /api/restore` beantwortet ein Scheme-Handler genau wie die Box
+  (`restore_presets()`: nur geänderte Plätze schreiben, der Editor folgt seinem Platz),
+  der WebSocket ist durch eine Brücke ersetzt. Ausgeblendet sind nur „Ton im Browser“ und der Hinweis zum Encoder-Board.
+- **MIDI:** alle Eingänge werden verbunden, wie an der Box. Program Change wählt den
+  Platz, der EZ-AG-Filter ist in den Einstellungen zuschaltbar.
+- **Presets:** 32 Plätze in `~/Library/Application Support/SIDSynth/Presets`, je eine
+  `patch-NN.json` im Format der Box, Werksklänge wie auf der Box.
+- **Box-Menü:** Presets von der Box holen (`GET /api/backup`), diesen Klang oder alle
+  eigenen Klänge übertragen. Übertragen geht über den WebSocket der Box mit `name`,
+  `set` und `save`, **ohne neue Firmware**. Der Mac muss dafür im WLAN „SID-Synth“
+  sein. Es sind höchstens 8 Befehle unterwegs, weil die Warteschlange der Box nur 32
+  Plätze hat und überzählige verwirft. Das ist gegen eine nachgebaute Box getestet,
+  gegen die echte noch nicht.
+  Mit der neuen Firmware geht es auch ohne App: im Editor der Box „Presets aus Datei
+  laden“ mit einer Sicherung aus der App (`POST /api/restore`).
+- **Datei-Menü:** Presets als Datei sichern und laden, im Format von `/api/backup`.
+
+Gemessen mit `make synth-test`: die Werksklänge haben am Mac 22–49 % Spitzenpegel bei
+A3 (Box: 20–47 %), bei gleicher Eingabe bitgleich, beliebige Längen im Audio-Callback
+ändern nichts am Ergebnis. Die Last am Mac liegt bei rund 1 %.
+
+Noch nicht gebaut: iPad (der Code ist dafür vorbereitet, es fehlen die Dateidialoge und
+das Target), Drehregler auf dem Bildschirm (`turn`/`press` versteht der Controller
+schon), AUv3.
 
 Grundlage ist der Stand auf Branch `sid-synth`. Wie die Box aufgebaut ist, steht in
 [Firmware/README.md](Firmware/README.md), Abschnitt „Der eingebaute SID-Synth“.

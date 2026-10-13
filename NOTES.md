@@ -95,7 +95,11 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
 4. **OLED**, falls bestellt (Adafruit 938, 1,3″ 128×64, STEMMA QT, Adresse 0x3C) —
    wird an der zweiten Buchse des Encoder-Boards durchgesteckt. Anzeige schreiben:
    Platz, Presetname, die drei Reglerwerte.
-5. Danach: Pull Request `sid-synth` → `main`.
+5. **Umbau der Klangerzeugung prüfen** (13.10. abends für die Mac-App gemacht, siehe
+   PORTIERUNG.md): nach dem Flashen `tools/synth_check.py` — Pegel müssen bei 20–47 %
+   bleiben, Last bei 14–16 %. Dann einmal aus der Mac-App einen Klang auf die Box
+   übertragen (Menü „Box“).
+6. Danach: Pull Request `sid-synth` → `main`.
 
 Ideen für später: dreistimmiger Modus (eine SID-Stimme je Note), zweiter SID für
 Stereo, 96 kHz gegen Aliasing in hohen Lagen (Last 26 %), Tab5-Port. App für macOS und
