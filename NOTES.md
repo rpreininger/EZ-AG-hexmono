@@ -8,8 +8,8 @@ dem gelöteten DAC** — zuerst Fotos von beiden Seiten des Moduls ansehen (Schr
 Der USB-Audio-Weg ist damit vom Tisch (AG06 MK2, siehe unten).
 
 Sitzung 13.10. in Kürze:
-- Anschluss des Encoder-Boards geklärt, Foto der Rückseite liegt unter
-  `D:\Developer\Arduino\SID\snap\rotary.jpg`: zwei gleichwertige STEMMA-QT-Buchsen
+- Anschluss des Encoder-Boards geklärt, Foto der Rückseite:
+  [docs/encoder-board-rueckseite.jpg](docs/encoder-board-rueckseite.jpg) — zwei gleichwertige STEMMA-QT-Buchsen
   links und rechts, die Lochreihen bleiben leer, die Adress-Lötpunkte nicht anfassen.
   Das DevKitC hat keine STEMMA-QT-Buchse → Kabel Adafruit 4397 (STEMMA QT auf
   Dupont-Buchse, 15 cm). Belegung in Schritt 2 und in der README.
@@ -24,7 +24,8 @@ Sitzung 13.10. in Kürze:
 - Fehler behoben: ein Name, der auf einen Umlaut endet, verlor seinen letzten Buchstaben
   („Menü“ → „Men“). Die Kürzung steckt jetzt einmal in `params.cpp` (`set_name`).
 - Sicherung der Presets vom 13.10. (8 Plätze, eigene auf 1 und 2):
-  `D:\Developer\Arduino\SID\backup\sid-presets-2026-10-13.json`.
+  [docs/sid-presets-2026-10-13.json](docs/sid-presets-2026-10-13.json) — lässt sich
+  mit „Presets aus Datei laden“ wieder einspielen.
 - Plan für eine Mac-/iPad-App: [PORTIERUNG.md](PORTIERUNG.md).
 
 Technischer Aufbau, Verdrahtung und Befehle: [Firmware/README.md](Firmware/README.md),
