@@ -35,6 +35,8 @@ struct EditorView {
         #if os(iOS)
         // Die Seite rückt selbst ab (env(safe-area-inset-…)), nicht noch einmal die WebView.
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.minimumZoomScale = 1
+        webView.scrollView.maximumZoomScale = 1
         #endif
         bridge.webView = webView
         coordinator.bridge = bridge
@@ -95,14 +97,19 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
     })();
     """
 
-    /// „Ton im Browser" braucht es nicht, der Ton kommt direkt aus dem Gerät. Das
+    /// Dazu: kein Zoom. „Ton im Browser" braucht es nicht, der Ton kommt direkt aus dem Gerät. Das
     /// Encoder-Board gibt es hier auch nicht, und die App sendet kein MIDI — also auch
     /// kein „Noten auch an MIDI OUT".
     static let appStyle = """
     (() => {
       const style = document.createElement('style');
-      style.textContent = '#snd, #enc, .row:has(#thru) { display: none !important; }';
+      style.textContent = '#snd, #enc, .row:has(#thru) { display: none !important; }'
+        + ' html { touch-action: manipulation; }';
       document.head.appendChild(style);
+      // Kein Zoom in der App: iOS zoomt sonst beim Antippen jedes Felds heran (Schrift
+      // unter 16 px) und beim Doppeltipp.
+      const viewport = document.querySelector('meta[name=viewport]');
+      if (viewport) viewport.content += ',maximum-scale=1,user-scalable=no';
     })();
     """
 
