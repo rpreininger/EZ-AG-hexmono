@@ -51,7 +51,7 @@ targets:
   # Werksklänge, Schema, EZ-AG-Filter) und zeigt deren Web-Editor. Siehe PORTIERUNG.md.
   SIDSynth:
     type: application
-    platform: macOS
+    supportedDestinations: [macOS, iOS]
     sources:
       - path: SIDSynth/App
       - path: SIDSynth/Core
@@ -72,6 +72,20 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: Zum Holen und Übertragen der Presets über das WLAN der Box.
+        # iPad und iPhone: Ton und MIDI auch im Hintergrund, ein Fenster, alle Ausrichtungen.
+        UIBackgroundModes: [audio]
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_NAME: SIDSynth
@@ -86,5 +100,8 @@ targets:
         GCC_OPTIMIZATION_LEVEL: "2"
         GCC_WARN_INHIBIT_ALL_WARNINGS: NO
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
+        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+        # Fürs iPad: das Entwicklerzertifikat auf diesem Mac.
+        "DEVELOPMENT_TEAM[sdk=iphoneos*]": 6R26PD6ZLD
+        TARGETED_DEVICE_FAMILY: "1,2"
         ENABLE_USER_SCRIPT_SANDBOXING: NO

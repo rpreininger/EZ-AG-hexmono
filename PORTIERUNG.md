@@ -45,8 +45,21 @@ Gemessen mit `make synth-test`: die Werksklänge haben am Mac 22–49 % Spitzenp
 A3 (Box: 20–47 %), bei gleicher Eingabe bitgleich, beliebige Längen im Audio-Callback
 ändern nichts am Ergebnis. Die Last am Mac liegt bei rund 1 %.
 
-Noch nicht gebaut: iPad (der Code ist dafür vorbereitet, es fehlen die Dateidialoge und
-das Target), Drehregler auf dem Bildschirm (`turn`/`press` versteht der Controller
+**iPad und iPhone** (13.10. spät): dasselbe Target baut für iOS (`make synth-ipad`).
+Neu sind nur die plattformabhängigen Teile: `Dialogs.swift` (Meldungen, Dateien
+sichern und laden über den Dateien-Dialog), `AudioOutput` mit Audio-Session (Wiedergabe
+auch bei Stummschalter und im Hintergrund, Puffer ~5 ms, Wiederanlauf nach Anrufen),
+und statt der Menüleiste ein Menü oben rechts mit denselben Befehlen. Der Bildschirm
+bleibt beim Spielen an. Der C2MIDI Pro kommt direkt in die USB-C-Buchse.
+Im Simulator geprüft (iPad Air, iPhone 17): Editor, Werte, Status, Klangerzeugung läuft.
+**Noch nicht am Gerät:** Signieren braucht in Xcode unter Einstellungen → Accounts das
+Apple-Konto zum Zertifikat (Team `6R26PD6ZLD`); MIDI über den C2MIDI, Latenz beim
+Spielen und das Übertragen über das WLAN der Box sind am iPad noch zu prüfen.
+
+Dabei im Editor behoben: die Zeile „Unter …“ (Zielplatz, Hierhin, Abbrechen) war immer
+zu sehen, weil `.bar{display:flex}` das Attribut `hidden` überstimmte — auch auf der Box.
+
+Noch nicht gebaut: Drehregler auf dem Bildschirm (`turn`/`press` versteht der Controller
 schon), AUv3.
 
 Grundlage ist der Stand auf Branch `sid-synth`. Wie die Box aufgebaut ist, steht in

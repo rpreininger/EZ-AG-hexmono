@@ -1,6 +1,6 @@
 APP := build/Build/Products/Debug/MidiFilter.app
 
-.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run
+.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run synth-ipad
 
 project:
 	xcodegen generate
@@ -63,3 +63,15 @@ synth-run: project
 	           -derivedDataPath build build
 	@pkill -x SIDSynth || true
 	open $(SYNTH_APP)
+
+# Dieselbe App auf iPad oder iPhone, per Kabel oder WLAN gekoppelt. Gerät wählen mit
+# DEVICE=<Name oder Kennung aus `xcrun devicectl list devices`>.
+DEVICE ?= iPad von Ralf
+SYNTH_IOS_APP := build/Build/Products/Debug-iphoneos/SIDSynth.app
+
+synth-ipad: project
+	xcodebuild -project MidiFilter.xcodeproj -scheme SIDSynth \
+	           -destination 'generic/platform=iOS' -configuration Debug \
+	           -derivedDataPath build -allowProvisioningUpdates build
+	xcrun devicectl device install app --device "$(DEVICE)" $(SYNTH_IOS_APP)
+	xcrun devicectl device process launch --device "$(DEVICE)" de.ralfpreininger.SIDSynth

@@ -1,18 +1,21 @@
-import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
+#if os(macOS)
+import AppKit
+#endif
 
 /// Der Web-Editor der Box, unverändert (Firmware/web/index.html), in einer WKWebView.
 ///
-/// Die Seite wird unter `sid://box/` geladen; `/api/schema` und `/api/backup` beantwortet
-/// der Scheme-Handler, so wie der Webserver der Box. Statt des WebSockets bekommt die
-/// Seite eine kleine Brücke nach Swift mit denselben Textzeilen. Am Editor selbst ist
-/// dafür nichts geändert.
-struct EditorView: NSViewRepresentable {
+/// Die Seite wird unter `sid://box/` geladen; `/api/schema`, `/api/backup` und
+/// `/api/restore` beantwortet der Scheme-Handler, so wie der Webserver der Box. Statt des
+/// WebSockets bekommt die Seite eine kleine Brücke nach Swift mit denselben Textzeilen.
+/// Am Editor selbst ist dafür nichts geändert.
+struct EditorView {
     let app: AppModel
 
-    func makeNSView(context: Context) -> WKWebView {
+    @MainActor
+    private func makeWebView(_ coordinator: Coordinator) -> WKWebView {
         let bridge = EditorBridge(app: app)
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(bridge, forURLScheme: "sid")
@@ -26,13 +29,18 @@ struct EditorView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = bridge
         webView.uiDelegate = bridge
+        #if DEBUG
+        webView.isInspectable = true  // Safari → Entwickler, zum Nachsehen im Editor
+        #endif
+        #if os(iOS)
+        // Die Seite rückt selbst ab (env(safe-area-inset-…)), nicht noch einmal die WebView.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        #endif
         bridge.webView = webView
-        context.coordinator.bridge = bridge
+        coordinator.bridge = bridge
         webView.load(URLRequest(url: URL(string: "sid://box/")!))
         return webView
     }
-
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -41,6 +49,19 @@ struct EditorView: NSViewRepresentable {
     }
 }
 
+#if os(macOS)
+extension EditorView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+#else
+extension EditorView: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView { makeWebView(context.coordinator) }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+#endif
+
+@MainActor
 final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, WKNavigationDelegate,
     WKUIDelegate {
     let app: AppModel
@@ -74,8 +95,8 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
     })();
     """
 
-    /// „Ton im Browser" braucht es nicht, der Ton kommt direkt aus dem Mac. Das
-    /// Encoder-Board gibt es am Mac auch nicht, und die App sendet kein MIDI — also auch
+    /// „Ton im Browser" braucht es nicht, der Ton kommt direkt aus dem Gerät. Das
+    /// Encoder-Board gibt es hier auch nicht, und die App sendet kein MIDI — also auch
     /// kein „Noten auch an MIDI OUT".
     static let appStyle = """
     (() => {
@@ -180,6 +201,7 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
         decisionHandler(.allow)
     }
 
+    #if os(macOS)
     /// Sonst landen Tasten (A–K spielt die Klaviatur) nicht in der Seite, bis man einmal
     /// hineinklickt.
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -187,7 +209,7 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
     }
 
     /// Für „Presets aus Datei laden": ohne diese Methode öffnet `<input type=file>` unter
-    /// macOS keinen Dialog.
+    /// macOS keinen Dialog. iOS bringt seinen eigenen mit.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel()
@@ -195,23 +217,20 @@ final class EditorBridge: NSObject, WKURLSchemeHandler, WKScriptMessageHandler, 
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         completionHandler(panel.runModal() == .OK ? panel.urls : nil)
     }
+    #endif
 
     // MARK: confirm() der Seite
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Abbrechen")
-        completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        Task { @MainActor in completionHandler(await Dialogs.confirm(message, "")) }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.runModal()
-        completionHandler()
+        Task { @MainActor in
+            await Dialogs.show(message, "")
+            completionHandler()
+        }
     }
 }
