@@ -44,19 +44,24 @@ juce_add_plugin(SIDSynthPlugin
     VST3_CATEGORIES Instrument Synth
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+# Der Web-Editor der Box, unverändert, im Plug-in eingebettet.
+juce_add_binary_data(SIDSynthWebEditor SOURCES ${ROOT}/Firmware/web/index.html)
+
 target_sources(SIDSynthPlugin PRIVATE
     SIDSynthProcessor.cpp
+    EditorProtocol.cpp
+    SIDSynthEditor.cpp
     ParamText.cpp
     ${SYNTH_SOURCES})
 target_include_directories(SIDSynthPlugin PRIVATE ${SYNTH_INCLUDES})
 target_compile_features(SIDSynthPlugin PRIVATE cxx_std_17)
 target_compile_definitions(SIDSynthPlugin PUBLIC
     RESID_ENABLE_INTERPOLATE
-    JUCE_WEB_BROWSER=0
+    JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0)
 target_link_libraries(SIDSynthPlugin
-    PRIVATE juce::juce_audio_utils
+    PRIVATE juce::juce_audio_utils juce::juce_gui_extra SIDSynthWebEditor
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
 
 # Lädt das fertige VST3 wie eine DAW, spielt Noten und vergleicht mit der Klangerzeugung.
@@ -71,4 +76,21 @@ target_compile_definitions(SIDSynthPluginTest PRIVATE
     JUCE_USE_CURL=0)
 target_link_libraries(SIDSynthPluginTest
     PRIVATE juce::juce_audio_utils
+    PUBLIC juce::juce_recommended_config_flags)
+
+# Öffnet das Plug-in-Fenster mit dem Web-Editor und bedient ihn über dessen JavaScript.
+juce_add_console_app(SIDSynthEditorTest PRODUCT_NAME "SIDSynthEditorTest")
+target_sources(SIDSynthEditorTest PRIVATE
+    EditorTest.cpp SIDSynthProcessor.cpp EditorProtocol.cpp SIDSynthEditor.cpp ParamText.cpp
+    ${SYNTH_SOURCES})
+target_include_directories(SIDSynthEditorTest PRIVATE ${SYNTH_INCLUDES})
+target_compile_features(SIDSynthEditorTest PRIVATE cxx_std_17)
+target_compile_definitions(SIDSynthEditorTest PRIVATE
+    RESID_ENABLE_INTERPOLATE
+    JucePlugin_Build_Standalone=0
+    JUCE_WEB_BROWSER=1
+    JUCE_USE_CURL=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+target_link_libraries(SIDSynthEditorTest
+    PRIVATE juce::juce_audio_utils juce::juce_gui_extra SIDSynthWebEditor
     PUBLIC juce::juce_recommended_config_flags)

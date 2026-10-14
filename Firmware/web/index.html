@@ -255,10 +255,10 @@ function settings(main) {
     sel.onchange = () => cmd(`knob ${n} ${sel.value}`);
   }
   $('start').onchange = e => cmd('start ' + e.target.value);
-  $('init').onclick = () => { if (keep()) cmd('init'); };
+  $('init').onclick = async () => { if (await keep()) cmd('init'); };
   $('revert').onclick = () => cmd('revert');
-  $('erase').onclick = () => {
-    if (confirm(`Platz ${st.slot + 1} „${st.names[st.slot]}“ löschen? Ein Werksklang kommt dann wieder zum Vorschein.`)) {
+  $('erase').onclick = async () => {
+    if (await ask(`Platz ${st.slot + 1} „${st.names[st.slot]}“ löschen? Ein Werksklang kommt dann wieder zum Vorschein.`)) {
       cmd('erase ' + st.slot);
     }
   };
@@ -275,7 +275,7 @@ async function restore(file) {
   catch (e) { /* unten gemeldet */ }
   if (!slots.length) { toast('Keine Presets in der Datei – erwartet wird eine Sicherung von hier.'); return; }
   const own = slots.filter(s => st.own[s - 1]);
-  if (!confirm(`${slots.length === 1 ? 'Ein Preset' : slots.length + ' Presets'} aus „${file.name}“ laden?` +
+  if (!await ask(`${slots.length === 1 ? 'Ein Preset' : slots.length + ' Presets'} aus „${file.name}“ laden?` +
       (own.length ? `\nÜberschreibt eigene Klänge auf Platz ${own.join(', ')}.` : '') +
       '\nDer Ton setzt dabei bis zu drei Sekunden aus.')) return;
   try {
@@ -391,24 +391,28 @@ setInterval(() => cmd('ping ' + performance.now()), 2000);
 
 // MARK: Presets
 
-const keep = () => !st || !st.dirty || confirm('Die Änderungen sind noch nicht gespeichert. Verwerfen?');
+// Rückfragen gehen über ask() statt direkt über confirm(): im Browser ist es dasselbe, die
+// Mac-App und das Plug-in können so einen eigenen Dialog einsetzen (Antwort als Promise).
+const ask = window.sidAsk || (text => Promise.resolve(confirm(text)));
+const keep = async () => !st || !st.dirty || ask('Die Änderungen sind noch nicht gespeichert. Verwerfen?');
 function sendName() {
   const n = $('name').value.trim();
   if (st && n !== st.name) cmd('name ' + n);
 }
 
-$('prev').onclick = () => { if (keep()) cmd('prev'); };
-$('next').onclick = () => { if (keep()) cmd('next'); };
-$('slot').onchange = () => {
-  if (keep()) cmd('load ' + $('slot').value); else $('slot').value = st.slot;
+$('prev').onclick = async () => { if (await keep()) cmd('prev'); };
+$('next').onclick = async () => { if (await keep()) cmd('next'); };
+$('slot').onchange = async () => {
+  const slot = $('slot').value;
+  if (await keep()) cmd('load ' + slot); else $('slot').value = st.slot;
 };
 $('name').onchange = sendName;
 $('save').onclick = () => { sendName(); cmd('save ' + st.slot); };
 $('saveas').onclick = () => { $('target').value = st.slot; $('panel').hidden = false; };
 $('cancel').onclick = () => { $('panel').hidden = true; };
-$('saveto').onclick = () => {
+$('saveto').onclick = async () => {
   const t = +$('target').value;
-  if (st.used[t] && t !== st.slot && !confirm(`Platz ${t + 1} „${st.names[t]}“ überschreiben?`)) return;
+  if (st.used[t] && t !== st.slot && !await ask(`Platz ${t + 1} „${st.names[t]}“ überschreiben?`)) return;
   sendName();
   cmd('save ' + t);
   $('panel').hidden = true;

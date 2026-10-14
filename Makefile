@@ -100,6 +100,7 @@ synth-vst3:
 	cmake -S SIDSynth/Plugin -B $(PLUGIN_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Release
 	cmake --build $(PLUGIN_BUILD) --config Release
 	$(PLUGIN_BUILD)/SIDSynthPluginTest_artefacts/Release/SIDSynthPluginTest $(VST3)
+	$(PLUGIN_BUILD)/SIDSynthEditorTest_artefacts/Release/SIDSynthEditorTest
 	mkdir -p ~/Library/Audio/Plug-Ins/VST3
 	rm -rf ~/Library/Audio/Plug-Ins/VST3/SID-Synth.vst3
 	ditto $(VST3) ~/Library/Audio/Plug-Ins/VST3/SID-Synth.vst3

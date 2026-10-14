@@ -4,15 +4,22 @@
 #include <string.h>
 
 #include "ParamText.h"
+#include "SIDSynthEditor.h"
 
 using namespace synth;
 using core::Command;
 using core::CommandType;
 using core::kBlock;
 
+// Gemeinsam mit EditorProtocol.cpp
+bool patchFromJson(const juce::var& json, Patch& patch);
+juce::var patchToJson(const Patch& patch);
+
 namespace {
 
 juce::String displayName(const Param& p) { return juce::String(p.group) + " " + p.label; }
+
+}  // namespace
 
 /// Wie read_file() der Box: unbekannte Schlüssel übergehen, fehlende behalten die
 /// Voreinstellung, jeder Wert wird auf seinen Bereich begrenzt.
@@ -37,8 +44,6 @@ juce::var patchToJson(const Patch& patch) {
     root->setProperty("v", juce::var(values));
     return juce::var(root);
 }
-
-}  // namespace
 
 SIDSynthProcessor::SIDSynthProcessor()
     : AudioProcessor(BusesProperties().withOutput("Ausgang", juce::AudioChannelSet::stereo(), true)) {
@@ -77,6 +82,9 @@ SIDSynthProcessor::SIDSynthProcessor()
 // MARK: - Plätze
 
 juce::File SIDSynthProcessor::presetFolder() {
+    // Nur für Tests: ein anderer Ordner, damit sie nicht die echten Presets anfassen.
+    const juce::String override = juce::SystemStats::getEnvironmentVariable("SIDSYNTH_PRESET_DIR", {});
+    if (override.isNotEmpty()) return juce::File(override);
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Application Support/SIDSynth/Presets");
 }
@@ -86,6 +94,7 @@ void SIDSynthProcessor::loadSlot(int slot) {
     Slot& s = slots_[static_cast<size_t>(slot)];
     const juce::File file = presetFolder().getChildFile(juce::String::formatted("patch-%02d.json", slot));
     s.used = file.existsAsFile() && patchFromJson(juce::JSON::parse(file), s.patch);
+    own_[static_cast<size_t>(slot)] = s.used;
     if (!s.used) s.used = presets::factory(slot, s.patch);
     if (!s.used) init_patch(s.patch, "");
 }
@@ -96,6 +105,7 @@ void SIDSynthProcessor::setCurrentProgram(int index) {
     if (!slots_[static_cast<size_t>(index)].used) return;
     program_ = index;
     applyPatch(slots_[static_cast<size_t>(index)].patch);
+    broadcastState();
 }
 
 const juce::String SIDSynthProcessor::getProgramName(int index) {
@@ -128,7 +138,16 @@ Patch SIDSynthProcessor::currentPatch() const {
 /// Program Change aus dem Audio-Thread: die Parameter setzt der Hauptthread.
 void SIDSynthProcessor::timerCallback() {
     const int program = requestedProgram_.exchange(-1);
-    if (program >= 0) setCurrentProgram(program);
+    if (program >= 0) {
+        setCurrentProgram(program);
+        updateHostDisplay(ChangeDetails().withProgramChanged(true));
+    }
+    sendChangedParameters();
+    // Wie die Box: einmal je Sekunde eine Statuszeile an den Editor.
+    if (++ticks_ >= 20) {
+        ticks_ = 0;
+        send("stat " + statusLine());
+    }
 }
 
 // MARK: - Zustand im Projekt der DAW
@@ -146,6 +165,7 @@ void SIDSynthProcessor::setStateInformation(const void* data, int size) {
     if (!patchFromJson(json, patch)) return;
     program_ = juce::jlimit(0, presets::kSlots - 1, static_cast<int>(json.getProperty("program", 0)));
     applyPatch(patch);
+    broadcastState();
 }
 
 // MARK: - Audio
@@ -183,6 +203,7 @@ void SIDSynthProcessor::syncParameters() {
 
 /// Wie play() in synth_main.cpp.
 void SIDSynthProcessor::handle(const juce::MidiMessage& m) {
+    midiIn_.fetch_add(1);
     if (m.isNoteOn()) {
         core_.apply(Command{CommandType::NoteOn, static_cast<uint8_t>(m.getNoteNumber() & 0x7F),
                             static_cast<int16_t>(m.getVelocity() & 0x7F)});
@@ -198,8 +219,12 @@ void SIDSynthProcessor::handle(const juce::MidiMessage& m) {
 }
 
 void SIDSynthProcessor::renderBlock(int16_t* block) {
+    const auto start = juce::Time::getHighResolutionTicks();
     syncParameters();
-    core_.render_block(block);
+    const int peak = core_.render_block(block);
+    if (peak > peak_.load(std::memory_order_relaxed)) peak_.store(peak);
+    busySeconds_.store(busySeconds_.load(std::memory_order_relaxed) +
+                       juce::Time::highResolutionTicksToSeconds(juce::Time::getHighResolutionTicks() - start));
 }
 
 void SIDSynthProcessor::produce(float* out, int count) {
@@ -237,6 +262,12 @@ void SIDSynthProcessor::produce(float* out, int count) {
 
 void SIDSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
+    // Noten und Panik aus dem Editor
+    {
+        const auto scope = fifo_.read(fifo_.getNumReady());
+        for (int i = scope.startIndex1; i < scope.startIndex1 + scope.blockSize1; ++i) core_.apply(fifoItems_[static_cast<size_t>(i)]);
+        for (int i = scope.startIndex2; i < scope.startIndex2 + scope.blockSize2; ++i) core_.apply(fifoItems_[static_cast<size_t>(i)]);
+    }
     const int samples = buffer.getNumSamples();
     float* out = buffer.getWritePointer(0);
 
@@ -254,8 +285,6 @@ void SIDSynthProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     for (int channel = 1; channel < buffer.getNumChannels(); ++channel) buffer.copyFrom(channel, 0, buffer, 0, 0, samples);
 }
 
-juce::AudioProcessorEditor* SIDSynthProcessor::createEditor() {
-    return new juce::GenericAudioProcessorEditor(*this);
-}
+juce::AudioProcessorEditor* SIDSynthProcessor::createEditor() { return new SIDSynthEditor(*this); }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new SIDSynthProcessor(); }

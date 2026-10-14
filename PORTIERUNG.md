@@ -65,12 +65,17 @@ Apple Silicon). Jedes Exemplar hat seinen eigenen SID — dafür steckt der Zust
 `engine_core` jetzt in der Klasse `core::Core`. Gerechnet wird mit 44,1 kHz in
 128er-Blöcken wie auf der Box; läuft die DAW mit 44,1 kHz, ist das Ergebnis bitgleich mit
 der Box (geprüft), sonst wird mit gefenstertem Sinc umgerechnet. MIDI wirkt ab dem
-nächsten 128er-Block, die 76 Parameter sind automatisierbar und zeigen dieselben
+nächsten 128er-Block, die 65 Parameter sind automatisierbar und zeigen dieselben
 Einheiten wie der Editor. Programme sind die 32 Plätze, mit den Klängen der Mac-App aus
 demselben Ordner; das Projekt der DAW speichert den Klang im Format der Box.
 `SIDSynthPluginTest` lädt das fertige VST3 wie eine DAW und prüft das alles.
-Noch offen: in Cubase ausprobieren, eigene Oberfläche (bisher die einfache von JUCE),
-Signatur zum Weitergeben. Lizenz: JUCE 8 ist AGPLv3, das Plug-in damit auch.
+Als Oberfläche hat das Plug-in den Web-Editor der Box, unverändert eingebettet wie in der
+App. Speichern geht in denselben Ordner wie die Mac-App — eine Preset-Sammlung für App und
+Plug-in. Weil JUCEs WebView keine Dialoge zeigt, gehen Rückfragen im Editor jetzt über
+`ask()`; im Browser der Box ist das weiterhin `confirm()`. `SIDSynthEditorTest` öffnet
+das Fenster und bedient den Editor über sein JavaScript (Aufbau, Werte, Speichern,
+Löschen, Sicherung laden, Klaviatur).
+Noch offen: in Cubase ausprobieren, Signatur zum Weitergeben. Lizenz: JUCE 8 ist AGPLv3, das Plug-in damit auch.
 
 Noch nicht gebaut: Drehregler auf dem Bildschirm (`turn`/`press` versteht der Controller
 schon), AUv3.
