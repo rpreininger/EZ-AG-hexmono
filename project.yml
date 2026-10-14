@@ -73,6 +73,8 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSLocalNetworkUsageDescription: Zum Holen und Übertragen der Presets über das WLAN der Box.
+        # Keine eigene Verschlüsselung — erspart die Exportfrage bei jedem TestFlight-Build.
+        ITSAppUsesNonExemptEncryption: false
         # iPad und iPhone: Ton und MIDI auch im Hintergrund, ein Fenster, alle Ausrichtungen.
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
@@ -102,6 +104,8 @@ targets:
         GCC_WARN_INHIBIT_ALL_WARNINGS: NO
         CODE_SIGN_STYLE: Automatic
         "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+        # Pflicht für die Beglaubigung (Notarisierung) durch Apple, siehe make synth-dmg.
+        "ENABLE_HARDENED_RUNTIME[sdk=macosx*]": YES
         # Fürs iPad: das Entwicklerkonto (Team) in Xcode → Einstellungen → Accounts.
         "DEVELOPMENT_TEAM[sdk=iphoneos*]": PRM2DDW7M5
         TARGETED_DEVICE_FAMILY: "1,2"

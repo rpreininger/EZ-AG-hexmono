@@ -1,6 +1,6 @@
 APP := build/Build/Products/Debug/MidiFilter.app
 
-.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run synth-ipad
+.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run synth-ipad synth-dmg synth-testflight
 
 project:
 	xcodegen generate
@@ -75,3 +75,18 @@ synth-ipad: project
 	           -derivedDataPath build -allowProvisioningUpdates build
 	xcrun devicectl device install app --device "$(DEVICE)" $(SYNTH_IOS_APP)
 	xcrun devicectl device process launch --device "$(DEVICE)" de.ralfpreininger.SIDSynth
+
+# Zum Weitergeben am Mac: signiert, von Apple beglaubigt, als DMG. Siehe das Skript.
+synth-dmg: project
+	RESUME=$(RESUME) SIDSynth/Release/make_dmg.sh
+
+# iPad und iPhone für Freunde: hochladen zu App Store Connect, verteilt über TestFlight.
+# Die Buildnummer ist Datum und Uhrzeit, damit jeder Upload eine neue hat.
+synth-testflight: project
+	rm -rf build/SIDSynth-iOS.xcarchive build/testflight
+	xcodebuild archive -project MidiFilter.xcodeproj -scheme SIDSynth \
+	           -destination 'generic/platform=iOS' -archivePath build/SIDSynth-iOS.xcarchive \
+	           -allowProvisioningUpdates CURRENT_PROJECT_VERSION=$$(date +%Y%m%d%H%M) -quiet
+	xcodebuild -exportArchive -archivePath build/SIDSynth-iOS.xcarchive \
+	           -exportOptionsPlist SIDSynth/Release/ExportOptions-TestFlight.plist \
+	           -exportPath build/testflight -allowProvisioningUpdates

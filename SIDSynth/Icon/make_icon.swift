@@ -102,7 +102,8 @@ func render(size: Int, mac: Bool) -> Data {
     let s = CGFloat(size)
     let c = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                      // iOS: Apple nimmt das Icon nur ohne Alphakanal an.
+                      bitmapInfo: (mac ? CGImageAlphaInfo.premultipliedLast : .noneSkipLast).rawValue)!
     NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
     if mac {
         // Raster von Apple: 824 von 1024, Ecken 185, leichter Schatten nach unten
