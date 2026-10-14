@@ -1,6 +1,6 @@
 APP := build/Build/Products/Debug/MidiFilter.app
 
-.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run synth-ipad synth-dmg synth-testflight
+.PHONY: project build run test clean demo demo-loop firmware-test synth-test synth-run synth-ipad synth-dmg synth-testflight synth-vst3
 
 project:
 	xcodegen generate
@@ -90,3 +90,17 @@ synth-testflight: project
 	xcodebuild -exportArchive -archivePath build/SIDSynth-iOS.xcarchive \
 	           -exportOptionsPlist SIDSynth/Release/ExportOptions-TestFlight.plist \
 	           -exportPath build/testflight -allowProvisioningUpdates
+
+# SID-Synth als VST3 für macOS (Cubase, Ableton, Bitwig, Reaper …): bauen, wie eine DAW
+# laden und prüfen, dann für den eigenen Benutzer installieren.
+PLUGIN_BUILD := build/plugin
+VST3 := $(PLUGIN_BUILD)/SIDSynthPlugin_artefacts/Release/VST3/SID-Synth.vst3
+
+synth-vst3:
+	cmake -S SIDSynth/Plugin -B $(PLUGIN_BUILD) -G Ninja -DCMAKE_BUILD_TYPE=Release
+	cmake --build $(PLUGIN_BUILD) --config Release
+	$(PLUGIN_BUILD)/SIDSynthPluginTest_artefacts/Release/SIDSynthPluginTest $(VST3)
+	mkdir -p ~/Library/Audio/Plug-Ins/VST3
+	rm -rf ~/Library/Audio/Plug-Ins/VST3/SID-Synth.vst3
+	ditto $(VST3) ~/Library/Audio/Plug-Ins/VST3/SID-Synth.vst3
+	@echo "Installiert: ~/Library/Audio/Plug-Ins/VST3/SID-Synth.vst3"

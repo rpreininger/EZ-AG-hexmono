@@ -16,6 +16,7 @@ make demo            # simulierte EZ-AG gegen die laufende App, kein Instrument 
 make firmware-test   # Tests der ESP32-Portierung, auf dem Rechner
 make synth-run       # SID-Synth am Mac: Presets bauen, siehe PORTIERUNG.md
 make synth-ipad      # dieselbe App aufs iPad (DEVICE=… für ein anderes Gerät)
+make synth-vst3      # SID-Synth als VST3-Plug-in für macOS (Cubase, Ableton, …)
 make synth-test      # Klangerzeugung der Box und Übertragen, auf dem Rechner
 ```
 

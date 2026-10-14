@@ -59,6 +59,19 @@ Spielen und das Übertragen über das WLAN der Box sind am iPad noch zu prüfen.
 Dabei im Editor behoben: die Zeile „Unter …“ (Zielplatz, Hierhin, Abbrechen) war immer
 zu sehen, weil `.bar{display:flex}` das Attribut `hidden` überstimmte — auch auf der Box.
 
+**VST3 für macOS** (14.10.): `make synth-vst3` baut `SIDSynth/Plugin` mit JUCE 8.0.14,
+prüft es und installiert es nach `~/Library/Audio/Plug-Ins/VST3` (universell, Intel und
+Apple Silicon). Jedes Exemplar hat seinen eigenen SID — dafür steckt der Zustand von
+`engine_core` jetzt in der Klasse `core::Core`. Gerechnet wird mit 44,1 kHz in
+128er-Blöcken wie auf der Box; läuft die DAW mit 44,1 kHz, ist das Ergebnis bitgleich mit
+der Box (geprüft), sonst wird mit gefenstertem Sinc umgerechnet. MIDI wirkt ab dem
+nächsten 128er-Block, die 76 Parameter sind automatisierbar und zeigen dieselben
+Einheiten wie der Editor. Programme sind die 32 Plätze, mit den Klängen der Mac-App aus
+demselben Ordner; das Projekt der DAW speichert den Klang im Format der Box.
+`SIDSynthPluginTest` lädt das fertige VST3 wie eine DAW und prüft das alles.
+Noch offen: in Cubase ausprobieren, eigene Oberfläche (bisher die einfache von JUCE),
+Signatur zum Weitergeben. Lizenz: JUCE 8 ist AGPLv3, das Plug-in damit auch.
+
 Noch nicht gebaut: Drehregler auf dem Bildschirm (`turn`/`press` versteht der Controller
 schon), AUv3.
 
