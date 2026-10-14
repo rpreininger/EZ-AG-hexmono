@@ -150,12 +150,51 @@ static void test_factory(const char* wav_dir) {
     }
 }
 
+/// Zwei Instanzen abwechselnd gerechnet — wie zwei SID-Synths in einer DAW — müssen genau
+/// dasselbe liefern wie jede für sich.
+static void test_instances() {
+    auto run = [](core::Core& c, const Patch& patch, int note, std::vector<int16_t>& out, int blocks) {
+        int16_t block[core::kBlock];
+        for (int b = 0; b < blocks; ++b) {
+            if (b == 0) {
+                c.begin(patch);
+                c.apply({core::CommandType::NoteOn, static_cast<uint8_t>(note), 100});
+            }
+            c.render_block(block);
+            out.insert(out.end(), block, block + core::kBlock);
+        }
+    };
+    Patch a, b;
+    presets::factory(0, a);
+    presets::factory(5, b);
+    static core::Core alone, first, second;  // groß (reSID), deshalb nicht auf dem Stack
+    std::vector<int16_t> alone_a, alone_b, mixed_a, mixed_b;
+    run(alone, a, 57, alone_a, 300);
+    run(alone, b, 64, alone_b, 300);
+    for (int i = 0; i < 300; ++i) {
+        if (i == 0) {
+            first.begin(a);
+            first.apply({core::CommandType::NoteOn, 57, 100});
+            second.begin(b);
+            second.apply({core::CommandType::NoteOn, 64, 100});
+        }
+        int16_t block[core::kBlock];
+        first.render_block(block);
+        mixed_a.insert(mixed_a.end(), block, block + core::kBlock);
+        second.render_block(block);
+        mixed_b.insert(mixed_b.end(), block, block + core::kBlock);
+    }
+    CHECK(alone_a == mixed_a);
+    CHECK(alone_b == mixed_b);
+}
+
 int main(int argc, char** argv) {
     const char* wav_dir = argc == 3 && strcmp(argv[1], "--wav") == 0 ? argv[2] : nullptr;
     test_names();
     test_schema();
     test_chunking();
     test_volume_zero();
+    test_instances();
     test_factory(wav_dir);
     printf("%d Prüfungen, %d Fehler\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

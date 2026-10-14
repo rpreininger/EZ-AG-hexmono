@@ -68,6 +68,8 @@ void push(CommandType type, uint8_t a, int16_t b) {
 }
 
 // MARK: - Zustand des Audio-Callbacks
+core::Core g_core;  // der eine SID, gehört der Audio-Aufgabe
+
 
 int16_t g_block[kBlock];
 int g_position = kBlock;  // kBlock = nichts mehr übrig, nächster Block fällig
@@ -87,8 +89,8 @@ std::atomic<int32_t> g_peak_hold{0};
 void render_one_block() {
     const uint64_t t0 = mach_absolute_time();
     Command command;
-    while (g_commands.pop(command)) core::apply(command);
-    const int32_t peak = core::render_block(g_block);
+    while (g_commands.pop(command)) g_core.apply(command);
+    const int32_t peak = g_core.render_block(g_block);
     const double ns = (mach_absolute_time() - t0) * g_ticks_to_ns;
 
     if (peak > g_peak) g_peak = peak;
@@ -238,7 +240,7 @@ void sid_engine_begin(const int16_t* values) {
     Command command;
     while (g_commands.pop(command)) {
     }
-    core::begin(patch);
+    g_core.begin(patch);
     g_position = kBlock;
 }
 

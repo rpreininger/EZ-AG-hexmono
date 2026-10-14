@@ -4,7 +4,7 @@
 // Mac-App. Hier nur, was der ESP32 dazu braucht. Pro Block (128 Samples, 2,9 ms) auf
 // Kern 1:
 //   1. Befehle aus der Warteschlange übernehmen — Parameter, Noten, Pitchbend
-//   2. core::render_block(): Modulation, SID-Register, reSID, Ein- und Ausblenden
+//   2. g_core.render_block(): Modulation, SID-Register, reSID, Ein- und Ausblenden
 //   3. Last und Pegel messen, an I2S und ans Mithören geben
 
 #include "engine.h"
@@ -35,6 +35,8 @@ using core::CommandType;
 using core::kBlock;
 
 constexpr int kDmaBuffers = 4;  // 4 × 128 Samples = 11,6 ms Vorrat
+
+core::Core g_core;  // der eine SID, gehört der Audio-Aufgabe
 
 // MARK: - Geteilt mit den anderen Aufgaben
 
@@ -103,14 +105,14 @@ void audio_task(void*) {
 
         const uint32_t t0 = ESP.getCycleCount();
         Command command;
-        while (xQueueReceive(g_commands, &command, 0) == pdTRUE) core::apply(command);
-        const int32_t block_peak = core::render_block(mono);
+        while (xQueueReceive(g_commands, &command, 0) == pdTRUE) g_core.apply(command);
+        const int32_t block_peak = g_core.render_block(mono);
         if (block_peak > peak) peak = block_peak;
         for (int s = 0; s < kBlock; ++s) {
             frame[2 * s] = mono[s];
             frame[2 * s + 1] = mono[s];
         }
-        g_silent.store(core::silent());
+        g_silent.store(g_core.silent());
         if (peak > g_peak_hold.load(std::memory_order_relaxed)) g_peak_hold.store(peak);
         const uint32_t cycles = ESP.getCycleCount() - t0;
 
@@ -148,7 +150,7 @@ void audio_task(void*) {
 
 void begin(const Patch& patch) {
     g_commands = xQueueCreate(256, sizeof(Command));
-    core::begin(patch);
+    g_core.begin(patch);
 
     i2s_begin();
     xTaskCreatePinnedToCore(audio_task, "audio", 8192, nullptr, 18, nullptr, 1);

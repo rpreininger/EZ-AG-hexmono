@@ -14,7 +14,6 @@
 #include <math.h>
 #include <string.h>
 
-#include "sid.h"
 
 namespace synth {
 namespace core {
@@ -61,64 +60,29 @@ constexpr LfoIds kLfo[2] = {
     {P::L2_WAVE, P::L2_RATE, P::L2_DELAY, P::L2_PITCH, P::L2_PTGT, P::L2_PW, P::L2_CUT},
 };
 
-// MARK: - Zustand der Audio-Aufgabe, nur sie fasst das an
-
-reSID::SID g_sid;
-int16_t g_values[kParamCount];
-int g_chip = -1;
-uint8_t g_shadow[reg::kCount];
-bool g_shadow_valid[reg::kCount];
-
-struct Lfo {
-    float phase = 0;
-    float value = 0;
-    uint32_t random = 0x9E3779B9;
-};
-Lfo g_lfo[2];
-
-enum class Stage : uint8_t { Idle, Attack, Decay, Sustain, Release };
-struct Envelope {
-    Stage stage = Stage::Idle;
-    float level = 0;
-};
-Envelope g_env;
-
-struct Voice {
-    uint8_t held[8] = {};  // gedrückte Noten, die letzte oben
-    uint8_t held_count = 0;
-    uint8_t note = 60;
-    uint8_t velocity = 100;
-    bool gate = false;
-    bool retrigger = false;  // einen Block Gate aus, damit die SID-Hüllkurve neu startet
-    bool has_pitch = false;  // vor der ersten Note gibt es nichts, von dem man gleitet
-    float pitch = 60;        // klingende Tonhöhe in Halbtönen, gleitet zur Note
-    float since_note = 0;    // Sekunden seit dem Anschlag, für den LFO-Einsatz
-};
-Voice g_voice;
-float g_bend = 0;  // -1..1
-
-int32_t g_gain = 0;
-int32_t g_gain_target = kUnity;
-
 // MARK: - Hilfen
-
-inline int16_t v(P id) { return g_values[static_cast<size_t>(id)]; }
-inline float value_of(P id) { return curve(param(id), v(id)); }
 
 inline float clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
+static_assert(reg::kCount == 0x19, "Registerzahl des SID");
+
+}  // namespace
+
+int16_t Core::v(ParamId id) const { return values_[static_cast<size_t>(id)]; }
+float Core::value_of(ParamId id) const { return curve(param(id), v(id)); }
+
 /// Schreibt nur, was sich geändert hat — reSID reagiert auf jeden Schreibzugriff.
-void write_reg(uint8_t address, uint8_t value) {
-    if (g_shadow_valid[address] && g_shadow[address] == value) return;
-    g_shadow[address] = value;
-    g_shadow_valid[address] = true;
-    g_sid.write(address, value);
+void Core::write_reg(uint8_t address, uint8_t value) {
+    if (shadow_valid_[address] && shadow_[address] == value) return;
+    shadow_[address] = value;
+    shadow_valid_[address] = true;
+    sid_.write(address, value);
 }
 
 // MARK: - Noten
 
-void forget(uint8_t note) {
-    Voice& voice = g_voice;
+void Core::forget(uint8_t note) {
+    Voice& voice = voice_;
     for (uint8_t i = 0; i < voice.held_count; ++i) {
         if (voice.held[i] != note) continue;
         memmove(&voice.held[i], &voice.held[i + 1], voice.held_count - i - 1);
@@ -127,8 +91,8 @@ void forget(uint8_t note) {
     }
 }
 
-void hold(uint8_t note) {
-    Voice& voice = g_voice;
+void Core::hold(uint8_t note) {
+    Voice& voice = voice_;
     forget(note);
     if (voice.held_count == sizeof(voice.held)) {
         memmove(&voice.held[0], &voice.held[1], voice.held_count - 1);
@@ -138,8 +102,8 @@ void hold(uint8_t note) {
 }
 
 /// `attack`: neuer Anschlag mit Hüllkurve. Sonst nur die Tonhöhe wechseln (Legato).
-void play(uint8_t note, uint8_t velocity, bool attack) {
-    Voice& voice = g_voice;
+void Core::play(uint8_t note, uint8_t velocity, bool attack) {
+    Voice& voice = voice_;
     if (!voice.has_pitch || value_of(P::P_GLIDE) <= 0.0f) voice.pitch = note;
     voice.has_pitch = true;
     voice.note = note;
@@ -148,17 +112,17 @@ void play(uint8_t note, uint8_t velocity, bool attack) {
     if (voice.gate) voice.retrigger = true;
     voice.gate = true;
     voice.since_note = 0;
-    g_env.stage = Stage::Attack;
+    env_.stage = Stage::Attack;
 }
 
-void press(uint8_t note, uint8_t velocity) {
-    const bool legato = g_voice.gate && v(P::P_LEGATO) != 0;
+void Core::press(uint8_t note, uint8_t velocity) {
+    const bool legato = voice_.gate && v(P::P_LEGATO) != 0;
     hold(note);
     play(note, velocity, !legato);
 }
 
-void release(uint8_t note) {
-    Voice& voice = g_voice;
+void Core::release(uint8_t note) {
+    Voice& voice = voice_;
     forget(note);
     if (!voice.gate || note != voice.note) return;
     if (voice.held_count > 0) {
@@ -167,17 +131,17 @@ void release(uint8_t note) {
         return;
     }
     voice.gate = false;
-    g_env.stage = Stage::Release;
+    env_.stage = Stage::Release;
 }
 
 // MARK: - Modulation
 
 /// Rechnet beide LFOs einen Block weiter. `scale` ist der Einsatz nach der
 /// Verzögerung: 0 vor der Einsatzzeit, dann in 300 ms auf 1.
-void update_lfos(float scale[2]) {
+void Core::update_lfos(float scale[2]) {
     for (int i = 0; i < 2; ++i) {
         const LfoIds& ids = kLfo[i];
-        Lfo& lfo = g_lfo[i];
+        Lfo& lfo = lfo_[i];
         lfo.phase += value_of(ids.rate) * kBlockSeconds;
         const bool wrapped = lfo.phase >= 1.0f;
         if (wrapped) lfo.phase -= floorf(lfo.phase);
@@ -201,12 +165,12 @@ void update_lfos(float scale[2]) {
                 break;
         }
         const float delay = value_of(ids.delay) / 1000.0f;
-        scale[i] = delay <= 0.0f ? 1.0f : clampf((g_voice.since_note - delay) / 0.3f, 0.0f, 1.0f);
+        scale[i] = delay <= 0.0f ? 1.0f : clampf((voice_.since_note - delay) / 0.3f, 0.0f, 1.0f);
     }
 }
 
-void update_envelope() {
-    Envelope& env = g_env;
+void Core::update_envelope() {
+    Envelope& env = env_;
     const float sustain = v(P::ME_S) / 100.0f;
     switch (env.stage) {
         case Stage::Attack: {
@@ -246,8 +210,8 @@ void update_envelope() {
     }
 }
 
-void update_glide() {
-    Voice& voice = g_voice;
+void Core::update_glide() {
+    Voice& voice = voice_;
     const float time = value_of(P::P_GLIDE) / 1000.0f;
     if (time <= 0.0f) {
         voice.pitch = voice.note;
@@ -257,9 +221,9 @@ void update_glide() {
     voice.since_note += kBlockSeconds;
 }
 
-void write_registers(const float lfo_scale[2]) {
-    Voice& voice = g_voice;
-    const float base = voice.pitch + v(P::P_TRANSP) + g_bend * v(P::P_BEND);
+void Core::write_registers(const float lfo_scale[2]) {
+    Voice& voice = voice_;
+    const float base = voice.pitch + v(P::P_TRANSP) + bend_ * v(P::P_BEND);
     const bool gate = voice.gate && !voice.retrigger;
     const int mode = v(P::F_MODE);
     const int env_target = v(P::ME_PTGT);
@@ -271,12 +235,12 @@ void write_registers(const float lfo_scale[2]) {
         float pw = v(ids.pw);
         for (int l = 0; l < 2; ++l) {
             const LfoIds& lfo = kLfo[l];
-            const float mod = g_lfo[l].value * lfo_scale[l];
+            const float mod = lfo_[l].value * lfo_scale[l];
             const int target = v(lfo.target);
             if (target == 0 || target == o + 1) semis += value_of(lfo.pitch) / 100.0f * mod;
             pw += v(lfo.pw) / 100.0f * 2048.0f * mod;
         }
-        if (env_target == 0 || env_target == o + 1) semis += v(P::ME_PITCH) * g_env.level;
+        if (env_target == 0 || env_target == o + 1) semis += v(P::ME_PITCH) * env_.level;
 
         const float hz = 440.0f * exp2f((semis - 69.0f) / 12.0f);
         const long freq = lroundf(clampf(hz * kFreqScale, 0.0f, 65535.0f));
@@ -301,11 +265,11 @@ void write_registers(const float lfo_scale[2]) {
     voice.retrigger = false;
 
     float cutoff = v(P::F_CUT);
-    cutoff += v(P::F_ENV) / 100.0f * 2047.0f * g_env.level;
+    cutoff += v(P::F_ENV) / 100.0f * 2047.0f * env_.level;
     cutoff += v(P::F_KEY) / 100.0f * (voice.pitch - 60.0f) * 16.0f;
     cutoff += v(P::F_VEL) / 100.0f * (voice.velocity - 64) / 63.0f * 1024.0f;
     for (int l = 0; l < 2; ++l) {
-        cutoff += v(kLfo[l].cut) / 100.0f * 1024.0f * g_lfo[l].value * lfo_scale[l];
+        cutoff += v(kLfo[l].cut) / 100.0f * 1024.0f * lfo_[l].value * lfo_scale[l];
     }
     const long fc = lroundf(clampf(cutoff, 0.0f, 2047.0f));
     write_reg(reg::kFcLo, fc & 0x07);
@@ -317,35 +281,33 @@ void write_registers(const float lfo_scale[2]) {
     write_reg(reg::kModeVol, static_cast<uint8_t>(kModeBits[mode] | v(P::P_VOL)));
 }
 
-void update_chip() {
-    if (g_chip == v(P::P_CHIP)) return;
-    g_chip = v(P::P_CHIP);
-    g_sid.set_chip_model(g_chip == 1 ? reSID::MOS8580 : reSID::MOS6581);
+void Core::update_chip() {
+    if (chip_ == v(P::P_CHIP)) return;
+    chip_ = v(P::P_CHIP);
+    sid_.set_chip_model(chip_ == 1 ? reSID::MOS8580 : reSID::MOS6581);
 }
 
-}  // namespace
-
-void begin(const Patch& patch) {
-    memcpy(g_values, patch.values, sizeof(g_values));
-    g_chip = -1;
-    memset(g_shadow_valid, 0, sizeof(g_shadow_valid));
-    g_lfo[0] = Lfo();
-    g_lfo[1] = Lfo();
-    g_env = Envelope();
-    g_voice = Voice();
-    g_bend = 0;
-    g_gain = 0;
-    g_gain_target = kUnity;
+void Core::begin(const Patch& patch) {
+    memcpy(values_, patch.values, sizeof(values_));
+    chip_ = -1;
+    memset(shadow_valid_, 0, sizeof(shadow_valid_));
+    lfo_[0] = Lfo();
+    lfo_[1] = Lfo();
+    env_ = Envelope();
+    voice_ = Voice();
+    bend_ = 0;
+    gain_ = 0;
+    gain_target_ = kUnity;
 
     update_chip();
-    g_sid.set_sampling_parameters(kSidClockPal, reSID::SAMPLE_FAST, kSampleRate);
-    g_sid.reset();
+    sid_.set_sampling_parameters(kSidClockPal, reSID::SAMPLE_FAST, kSampleRate);
+    sid_.reset();
 }
 
-void apply(const Command& command) {
+void Core::apply(const Command& command) {
     switch (command.type) {
         case CommandType::SetParam:
-            if (command.a < kParamCount) g_values[command.a] = command.b;
+            if (command.a < kParamCount) values_[command.a] = command.b;
             break;
         case CommandType::NoteOn:
             if (command.b == 0) {
@@ -358,22 +320,22 @@ void apply(const Command& command) {
             release(command.a);
             break;
         case CommandType::Bend:
-            g_bend = command.b / 8192.0f;
+            bend_ = command.b / 8192.0f;
             break;
         case CommandType::AllOff:
-            g_voice.held_count = 0;
-            if (g_voice.gate) {
-                g_voice.gate = false;
-                g_env.stage = Stage::Release;
+            voice_.held_count = 0;
+            if (voice_.gate) {
+                voice_.gate = false;
+                env_.stage = Stage::Release;
             }
             break;
         case CommandType::Mute:
-            g_gain_target = command.a != 0 ? 0 : kUnity;
+            gain_target_ = command.a != 0 ? 0 : kUnity;
             break;
     }
 }
 
-int32_t render_block(int16_t out[kBlock]) {
+int32_t Core::render_block(int16_t out[kBlock]) {
     update_chip();
     float lfo_scale[2];
     update_lfos(lfo_scale);
@@ -382,16 +344,16 @@ int32_t render_block(int16_t out[kBlock]) {
     write_registers(lfo_scale);
 
     reSID::cycle_count delta = kBlock * 32;  // mehr als nötig: endet nach kBlock Samples
-    g_sid.clock(delta, out, kBlock);
+    sid_.clock(delta, out, kBlock);
 
     int32_t peak = 0;
     for (int s = 0; s < kBlock; ++s) {
-        if (g_gain < g_gain_target) {
-            g_gain = g_gain + kFadeStep > g_gain_target ? g_gain_target : g_gain + kFadeStep;
-        } else if (g_gain > g_gain_target) {
-            g_gain = g_gain - kFadeStep < g_gain_target ? g_gain_target : g_gain - kFadeStep;
+        if (gain_ < gain_target_) {
+            gain_ = gain_ + kFadeStep > gain_target_ ? gain_target_ : gain_ + kFadeStep;
+        } else if (gain_ > gain_target_) {
+            gain_ = gain_ - kFadeStep < gain_target_ ? gain_target_ : gain_ - kFadeStep;
         }
-        const int32_t sample = (static_cast<int32_t>(out[s]) * g_gain) >> 15;
+        const int32_t sample = (static_cast<int32_t>(out[s]) * gain_) >> 15;
         const int32_t magnitude = sample < 0 ? -sample : sample;
         if (magnitude > peak) peak = magnitude;
         out[s] = static_cast<int16_t>(sample);
@@ -399,7 +361,7 @@ int32_t render_block(int16_t out[kBlock]) {
     return peak;
 }
 
-bool silent() { return g_gain == 0 && g_gain_target == 0; }
+bool Core::silent() const { return gain_ == 0 && gain_target_ == 0; }
 
 }  // namespace core
 }  // namespace synth
