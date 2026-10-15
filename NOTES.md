@@ -168,6 +168,11 @@ Was der Umzug bedeutet (mehrere Tage, nichts davon geprüft):
 - **Falle:** drei Display-Varianten (Mai 2025, Okt. 2025, Apr. 2026) — nur aktuelle
   M5Stack-Bibliotheken erkennen alle; ESPHome kann nur die erste
 
+Der Tab5 ist auch Versuchsgerät für das zweite Projekt **midi-ft-bridge** (Fantom → Videoclips
+auf LED-Panels, heute eine Mac-App): Plan und Testreihenfolge dort in `WISSEN/ESP32-PORT.md`.
+Wenn das Board da ist, beginnen die Tests dort — vorher klären, ob zuerst der SID-Umzug oder
+die Bridge.
+
 ## Noch zu besorgen
 
 - Dupont-Kabel **Buchse–Buchse** — Board und DAC haben beide Stifte; die beim DAC
