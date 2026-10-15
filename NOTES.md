@@ -48,7 +48,7 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
 | Klangerzeugung | reSID 0.16, SAMPLE_FAST, 44,1 kHz, ein SID mit drei Oszillatoren auf einer Note (wie SidStation mono) |
 | Audio | Youmile GY-PCM5102, pHAT-Bauform (Amazon B09NXKPZ8N), bestellt; Stiftleiste lose → wird gelötet |
 | Regler | Adafruit Quad Rotary Encoder 5752 („NeoRotary 4") aus dem Chromakey-Projekt `D:\Developer\Arduino\ESP32` |
-| Aufbau | „Weg A": Board + Module. M5Stack Tab5 (ESP32-P4, USB-A-Host, ES8388 mit Klinke, 5″-Touch, Grove) bleibt Option für ein späteres Gerät aus einem Guss |
+| Aufbau | „Weg A": Board + Module, bis der Tab5 läuft. **M5Stack Tab5 am 15.10. bestellt** (ESP32-P4, USB-A-Host, ES8388 mit Klinke, 5″-Touch, Grove) — das Gerät aus einem Guss, siehe „Tab5" |
 
 ---
 
@@ -100,9 +100,10 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
    bleiben, Last bei 14–16 %. Dann einmal aus der Mac-App einen Klang auf die Box
    übertragen (Menü „Box“).
 6. Danach: Pull Request `sid-synth` → `main`.
+7. **Umzug auf den Tab5**, sobald er da ist — siehe „Tab5" unten.
 
 Ideen für später: dreistimmiger Modus (eine SID-Stimme je Note), zweiter SID für
-Stereo, 96 kHz gegen Aliasing in hohen Lagen (Last 26 %), Tab5-Port. App für macOS und
+Stereo, 96 kHz gegen Aliasing in hohen Lagen (Last 26 %). App für macOS und
 iPadOS, um Presets dort zu bauen und 1:1 auf die Box zu übertragen: geplant in
 [PORTIERUNG.md](PORTIERUNG.md).
 
@@ -123,6 +124,50 @@ der S3 nicht: Arduino 2.0.17 / IDF 4.4 kennt keine Hubs, erst neuere IDF-Version
 `CONFIG_USB_HOST_HUBS_SUPPORTED` — und auch dann nur Geräte mit derselben
 Geschwindigkeit wie der Hub, hier also Full Speed.
 
+## Tab5 (bestellt am 15.10.)
+
+Gesucht war ein fertiges Board mit Klinke und Display. Ein ESP32-S3-Board mit beidem gibt
+es nicht — die S3-Boards mit Display haben nur einen Lautsprecheranschluss. Verworfen:
+CoreS3 + Module Audio (nur eine USB-Buchse → keine Konsole, solange der C2MIDI steckt),
+Cardputer-Adv (kein PSRAM). Der Tab5: ESP32-P4, 16 MB Flash, 32 MB PSRAM, WLAN über einen
+ESP32-C6, 5″-Touch 1280×720, ES8388 mit 3,5-mm-Klinke, USB-A-Host, USB-C, Grove.
+Empfohlen war der K145 (mit NP-F550-Akku), bei Mouser um 52 € netto.
+
+Ein Händler führte ihn als „EOL" („wird nicht mehr hergestellt … solange der Bestand
+reicht"). Die Produktseite bei M5Stack hat am 15.10. keinen solchen Vermerk, beide
+Varianten auf Lager (55 $ / 60 $ mit Akku); am 28.04.2026 wurde noch der Display-Treiber
+getauscht, das Datenblatt ist vom 14.10.2026. Händlerbestand kann eine ältere
+Display-Variante sein (bei DigiKey Datecode 2509). Anfrage
+beim Hersteller läuft (EOL? welche Hardware-Version? Versand?) — Antwort hier nachtragen.
+
+Aus der [Doku](https://docs.m5stack.com/en/core/Tab5) und dem Blockschaltbild dort:
+- **USB:** USB-C hängt an `USB1_D+/D-`, USB-A an `USB2_OTG_D+/D-` — getrennte Leitungen,
+  also C2MIDI an USB-A und gleichzeitig Flashen/Konsole über USB-C (M5Stack setzt
+  `-DARDUINO_USB_MODE=1`, Konsole über USB-Serial-JTAG).
+- **5 V an USB-A** (`SYS_USB5V`) kommen aus der 5-V-Schiene hinter der Stromweiche, die
+  aus USB-C gespeist wird — geht auch ohne Akku. Muss per `USB5V_EN` (IO-Expander)
+  eingeschaltet werden. Ordentliches USB-C-Netzteil nehmen, Ladeteil, Display und C2MIDI
+  hängen alle daran.
+- **Audio:** Klinke direkt am ES8388 (I2C 0x10; I2S MCLK G30, BCLK G27, DOUT G26,
+  LRCK G29; I2C SCL G32, SDA G31). Lautsprecher-Verstärker NS4150 getrennt dahinter —
+  per `SPK_EN` abschalten, sonst spielt er mit. Kopfhörer-Erkennung `HP_DET`.
+- **Grove** hängt an zwei freien GPIOs (nicht am internen I2C) und liefert **5 V**.
+  Vor dem Anstecken des Encoder-Boards prüfen, ob es SDA/SCL dann auf 5 V hochzieht —
+  der P4 verträgt 3,3 V.
+- **PlatformIO** laut M5Stack: `platform = https://github.com/pioarduino/platform-espressif32.git#54.03.21`,
+  `board = esp32-p4-evboard`, `board_build.mcu = esp32p4`, `-DBOARD_HAS_PSRAM`,
+  M5Unified ≥ 0.2.23, M5GFX ≥ 0.2.30.
+
+Was der Umzug bedeutet (mehrere Tage, nichts davon geprüft):
+- Arduino-Kern 3.x / IDF 5 statt des festgenagelten 2.0.17 — der USB-Host-Teil ist nur
+  gegen 2.0.17 geprüft
+- WLAN über den C6 (ESP-Hosted)
+- ES8388 über I2C einstellen (der PCM5102 brauchte das nicht)
+- Anzeige für das 5″-Display
+- reSID-Last auf dem P4 neu messen
+- **Falle:** drei Display-Varianten (Mai 2025, Okt. 2025, Apr. 2026) — nur aktuelle
+  M5Stack-Bibliotheken erkennen alle; ESPHome kann nur die erste
+
 ## Noch zu besorgen
 
 - Dupont-Kabel **Buchse–Buchse** — Board und DAC haben beide Stifte; die beim DAC
@@ -131,6 +176,8 @@ Geschwindigkeit wie der Hub, hier also Full Speed.
 - Klinkenkabel 3,5 mm auf den Eingang von Mischpult oder Verstärker (Line, nicht
   Instrumenteneingang)
 - optional OLED Adafruit 938 + STEMMA-QT-Kabel Stecker–Stecker (z. B. Adafruit 4210)
+- für den Tab5: Kabel Grove auf STEMMA QT (Encoder-Board), USB-C-Netzteil, und falls der
+  C2MIDI einen USB-C-Stecker hat, einen Adapter USB-C-Buchse auf USB-A-Stecker
 
 ---
 
