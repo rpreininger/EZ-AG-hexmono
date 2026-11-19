@@ -11,15 +11,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "board.h"
 #include "engine_core.h"
 #include "params.h"
 
 namespace synth {
 
-/// Verdrahtung des DAC-Moduls (PCM5102A: BCK, LCK, DIN; SCK auf GND).
-constexpr int kI2sBckPin = 12;
-constexpr int kI2sWsPin = 13;
-constexpr int kI2sDoutPin = 14;
+/// Verdrahtung des DAC-Moduls (PCM5102A: BCK, LCK, DIN; SCK auf GND), siehe board.h.
+constexpr int kI2sBckPin = board::kI2sBckPin;
+constexpr int kI2sWsPin = board::kI2sWsPin;
+constexpr int kI2sDoutPin = board::kI2sDoutPin;
 
 /// Mithören im Browser, solange kein DAC angeschlossen ist: halbe Abtastrate, Mono.
 class PreviewRing {

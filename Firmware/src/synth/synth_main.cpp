@@ -19,12 +19,16 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <driver/gpio.h>
 
+#include "board.h"
+#include "controls.h"
+#include "display.h"
 #include "engine.h"
 #include "ezag_config.h"
 #include "midi_filter.h"
 #include "midi_ports.h"
-#include "controls.h"
+#include "panel.h"
 #include "params.h"
 #include "presets.h"
 #include "web.h"
@@ -35,8 +39,11 @@ namespace {
 
 using namespace synth;
 
+#if SYNTH_HAS_ACTIVITY_LED
 constexpr int kActivityLedPin = LED_BUILTIN;
 constexpr uint8_t kActivityLedBrightness = 6;  // gedämpftes Grün, siehe main.cpp
+#endif
+constexpr uint32_t kMidiShowMs = 150;  // so lange leuchtet „MIDI“ auf dem Display
 
 /// Regler 1–3 des Encoder-Boards: welcher Parameter, bis jemand es im Editor ändert.
 constexpr ParamId kDefaultKnobs[3] = {ParamId::F_CUT, ParamId::F_RES, ParamId::L1_RATE};
@@ -44,7 +51,16 @@ constexpr ParamId kDefaultKnobs[3] = {ParamId::F_CUT, ParamId::F_RES, ParamId::L
 constexpr uint32_t kKnobColors[3] = {0xFF3000, 0x20FF40, 0x3070FF};
 constexpr int kPresetKnob = 3;
 
+#if SYNTH_USB_HOST_MIDI
 UsbHostMidiPort g_port;
+bool midi_usb_connected() { return g_port.is_connected(); }
+constexpr char kMidiPortName[] = "usb";
+#else
+// DIN-MIDI: Optokoppler-Modul an einem RX-Pin, kein MIDI OUT (board.h).
+UartMidiPort g_port(Serial1, board::kMidiRxPin, board::kMidiTxPin);
+bool midi_usb_connected() { return false; }
+constexpr char kMidiPortName[] = "din";
+#endif
 midifilter::Filter g_filter(ezag_config());
 Preferences g_settings;
 
@@ -60,7 +76,10 @@ bool g_controls_present = false;
 
 uint32_t g_midi_in = 0;
 uint32_t g_param_changes = 0;
+#if SYNTH_HAS_ACTIVITY_LED
 uint32_t g_led_off_at_ms = 0;
+#endif
+uint32_t g_last_midi_ms = 0;
 
 // MARK: - Ausgabe
 
@@ -133,14 +152,23 @@ void notify(const String& text) {
 
 String status_line() {
     const EngineStats stats = engine::stats();
-    char text[200];
-    snprintf(text, sizeof(text),
-             "{\"load\":%.1f,\"max\":%.1f,\"gap\":%.1f,\"peak\":%d,\"usb\":%s,\"midi\":%u,"
-             "\"heap\":%u,\"drop\":%u}",
-             stats.load_avg, stats.load_max, stats.worst_gap_us / 1000.0, stats.peak,
-             g_port.is_connected() ? "true" : "false", static_cast<unsigned>(g_midi_in),
-             static_cast<unsigned>(ESP.getFreeHeap() / 1024),
-             static_cast<unsigned>(stats.dropped_commands));
+    char text[240];
+    int n = snprintf(text, sizeof(text),
+                     "{\"load\":%.1f,\"max\":%.1f,\"gap\":%.1f,\"peak\":%d,\"usb\":%s,"
+                     "\"port\":\"%s\",\"midi\":%u,\"heap\":%u,\"drop\":%u",
+                     stats.load_avg, stats.load_max, stats.worst_gap_us / 1000.0, stats.peak,
+                     midi_usb_connected() ? "true" : "false", kMidiPortName,
+                     static_cast<unsigned>(g_midi_in),
+                     static_cast<unsigned>(ESP.getFreeHeap() / 1024),
+                     static_cast<unsigned>(stats.dropped_commands));
+#if SYNTH_HAS_DISPLAY
+    const panel::Stats tafel = panel::stats();
+    const uint32_t last = panel::last_frame_ms();
+    n += snprintf(text + n, sizeof(text) - n, ",\"tafel\":%u,\"tafel_alt\":%ld",
+                  static_cast<unsigned>(tafel.packets),
+                  last == 0 ? -1L : static_cast<long>((millis() - last) / 1000));
+#endif
+    snprintf(text + n, sizeof(text) - n, "}");
     return String(text);
 }
 
@@ -256,6 +284,7 @@ void restore_presets(const char* text, size_t length) {
 /// Regler 1–3: den zugewiesenen Parameter verstellen. Rund 128 Rasten für den ganzen
 /// Bereich; schnell gedreht geht es bis zu viermal so weit je Raste. Regler 4: Presets.
 void turn_knob(int knob, int delta) {
+    display::wake();
     if (knob == kPresetKnob) {
         int slot = g_slot;
         for (int i = 0; i < abs(delta); ++i) slot = presets::step(slot, delta > 0 ? 1 : -1);
@@ -276,6 +305,7 @@ void turn_knob(int knob, int delta) {
 /// Druck auf Regler 1–3: dieser Parameter zurück auf den gespeicherten Wert.
 /// Druck auf Regler 4: alle Änderungen am Preset verwerfen.
 void press_knob(int knob) {
+    display::wake();
     if (knob == kPresetKnob) {
         load_slot(g_slot);
         return;
@@ -320,11 +350,67 @@ void poll_controls() {
     update_knob_leds();
 }
 
+/// Den Stand für die SID-Seite des Displays zusammenstellen; gezeichnet wird nur, was
+/// sich geändert hat (display.cpp).
+void update_display() {
+    if (!display::present()) return;
+    display::View view;
+    memset(&view, 0, sizeof(view));  // der Vergleich in set_view() geht über alle Bytes
+    view.slot = g_slot;
+    snprintf(view.name, sizeof(view.name), "%s", g_edit.name);
+    view.dirty = g_dirty;
+    for (int k = 0; k < 3; ++k) {
+        view.knob[k] = static_cast<uint8_t>(g_knob_params[k]);
+        view.value[k] = g_edit.values[g_knob_params[k]];
+    }
+    view.peak = engine::stats().peak;
+    view.midi = g_last_midi_ms != 0 && millis() - g_last_midi_ms < kMidiShowMs;
+    view.encoders = g_controls_present;
+    web::network_text(view.net, sizeof(view.net));
+    display::set_view(view);
+}
+
+/// Eine Einstellung, die fehlen darf — getString() schreibt sonst einen Fehler auf die Konsole.
+String setting_string(const char* key) {
+    return g_settings.isKey(key) ? g_settings.getString(key, "") : String();
+}
+
+/// Zugangsdaten für das fremde WLAN (Hotspot des Tab5), im NVS — nicht im Repository.
+void wifi_command(char* args) {
+    if (*args == '\0') {
+        const String ssid = setting_string("sta_ssid");
+        char net[24];
+        web::network_text(net, sizeof(net));
+        Serial.printf("WLAN  fremdes Netz: %s, jetzt: %s\n",
+                      ssid.length() > 0 ? ssid.c_str() : "(keins)", net);
+        return;
+    }
+    if (strcmp(args, "-") == 0) {
+        while_muted([] { return g_settings.remove("sta_ssid") && g_settings.remove("sta_pw"); });
+        notify("WLAN: fremdes Netz vergessen, gilt nach reboot");
+        return;
+    }
+    char* password = strchr(args, ' ');
+    if (password != nullptr) *password++ = '\0';
+    const String ssid(args);
+    const String pw(password != nullptr ? password : "");
+    while_muted([&] {
+        bool ok = g_settings.putString("sta_ssid", ssid) > 0;
+        if (pw.length() > 0) {
+            ok = ok && g_settings.putString("sta_pw", pw) > 0;
+        } else {
+            g_settings.remove("sta_pw");  // offenes Netz
+        }
+        return ok;
+    });
+    notify("WLAN: melde mich nach reboot bei \"" + ssid + "\" an");
+}
+
 void load_knob_settings() {
     for (int k = 0; k < 3; ++k) {
         char key[8];
         snprintf(key, sizeof(key), "knob%d", k);
-        const int index = find_param(g_settings.getString(key, "").c_str());
+        const int index = find_param(setting_string(key).c_str());
         g_knob_params[k] = index >= 0 ? static_cast<size_t>(index)
                                       : static_cast<size_t>(kDefaultKnobs[k]);
     }
@@ -433,7 +519,52 @@ void handle(char* line) {
     } else if (strcmp(command, "peak") == 0) {
         Serial.printf("PEAK %d\n", engine::take_peak());
     } else if (strcmp(command, "usb") == 0) {
+#if SYNTH_USB_HOST_MIDI
         g_port.print_descriptors(Serial);
+#else
+        Serial.println("MIDI kommt über DIN, nicht über USB");
+#endif
+    } else if (strcmp(command, "screen") == 0) {
+        // screen auto|sid|tafel|farben: was das Display zeigt, auto = Normalbetrieb
+        display::Mode mode = display::Mode::Auto;
+        if (strcmp(args, "sid") == 0) mode = display::Mode::Sid;
+        else if (strcmp(args, "tafel") == 0) mode = display::Mode::Panel;
+        else if (strcmp(args, "farben") == 0) mode = display::Mode::Colors;
+        display::set_mode(mode);
+        Serial.printf("SCREEN %s\n", *args != '\0' ? args : "auto");
+    } else if (strcmp(command, "paneltest") == 0) {
+        // paneltest <s>: Testbild wie vom Tab5, 0 hält es an
+        const int seconds = *args != '\0' ? atoi(args) : 30;
+        panel::test(static_cast<uint32_t>(seconds < 0 ? 0 : seconds));
+        Serial.printf("TAFEL Testbild %d s\n", seconds);
+    } else if (strcmp(command, "tafel") == 0) {
+        // Das empfangene Bild der vierten Tafel als Helligkeitsstufen, zum Prüfen ohne Blick
+        // aufs Display.
+        static uint8_t rgb[panel::kWidth * panel::kHeight * 3];
+        panel::snapshot(rgb);
+        static const char kRamp[] = " .:-=+*#%@";
+        const panel::Stats tafel = panel::stats();
+        Serial.printf("TAFEL %u Pakete, %u verworfen\n", static_cast<unsigned>(tafel.packets),
+                      static_cast<unsigned>(tafel.bad));
+        for (int y = 0; y < panel::kHeight; ++y) {
+            char row[panel::kWidth + 3];
+            row[0] = '|';
+            for (int x = 0; x < panel::kWidth; ++x) {
+                const uint8_t* p = &rgb[(y * panel::kWidth + x) * 3];
+                const int luma = (p[0] * 3 + p[1] * 6 + p[2]) / 10;  // 0..255
+                row[1 + x] = kRamp[luma * 9 / 255];
+            }
+            row[panel::kWidth + 1] = '|';
+            row[panel::kWidth + 2] = '\0';
+            Serial.println(row);
+        }
+    } else if (strcmp(command, "wifi") == 0) {
+        wifi_command(args);
+    } else if (strcmp(command, "reboot") == 0) {
+        Serial.println("Neustart …");
+        Serial.flush();
+        delay(100);
+        ESP.restart();
     } else if (strcmp(command, "dump") == 0) {
         presets::write_json(Serial, g_edit);
         Serial.println();
@@ -475,7 +606,13 @@ void poll_console() {
         }
         line[length] = '\0';
         length = 0;
-        Serial.printf("> %s\n", line);
+        if (strncmp(line, "wifi ", 5) == 0 && strchr(line + 5, ' ') != nullptr) {
+            // das WLAN-Passwort nicht zurückschreiben
+            Serial.printf("> wifi %.*s ***\n", static_cast<int>(strchr(line + 5, ' ') - (line + 5)),
+                          line + 5);
+        } else {
+            Serial.printf("> %s\n", line);
+        }
         // Nur an der Konsole: was sonst an den Browser geht, hier ausgeben.
         if (strcmp(line, "schema") == 0) {
             web::write_schema(Serial);
@@ -552,13 +689,18 @@ void poll_midi() {
         } else {
             forward(event);
         }
+        g_last_midi_ms = millis() | 1;
+#if SYNTH_HAS_ACTIVITY_LED
         neopixelWrite(kActivityLedPin, 0, kActivityLedBrightness, 0);
         g_led_off_at_ms = millis() + 30;
+#endif
     }
+#if SYNTH_HAS_ACTIVITY_LED
     if (g_led_off_at_ms != 0 && static_cast<int32_t>(millis() - g_led_off_at_ms) >= 0) {
         neopixelWrite(kActivityLedPin, 0, 0, 0);
         g_led_off_at_ms = 0;
     }
+#endif
 }
 
 void on_web_command(char* line) {
@@ -574,8 +716,10 @@ void on_web_command(char* line) {
 }  // namespace
 
 void setup() {
+#if SYNTH_HAS_ACTIVITY_LED
     pinMode(kActivityLedPin, OUTPUT);
     neopixelWrite(kActivityLedPin, 0, 0, 0);
+#endif
 
     // Mit Puffer, damit eine Statuszeile die MIDI-Verarbeitung nicht aufhält.
     Serial.setTxBufferSize(1024);
@@ -596,14 +740,25 @@ void setup() {
     engine::begin(g_edit);
 
     g_port.begin();
+#if !SYNTH_USB_HOST_MIDI
+    // Ohne gestecktes MIDI-Modul hinge der RX-Pin in der Luft und läse Rauschen als Noten.
+    gpio_pullup_en(static_cast<gpio_num_t>(board::kMidiRxPin));
+    Serial.printf("MIDI  DIN an GPIO %d\n", board::kMidiRxPin);
+#endif
     // Falls die SidStation von einem vorherigen Lauf noch eine Note hält.
     const midifilter::Result panic = g_filter.panic();
     for (uint8_t i = 0; i < panic.count && g_thru; ++i) g_port.write(panic.events[i]);
 
-    web::begin(&on_web_command, &restore_presets);
+    display::begin();
+    const String sta_ssid = setting_string("sta_ssid");
+    const String sta_pw = setting_string("sta_pw");
+    web::begin(&on_web_command, &restore_presets, sta_ssid.c_str(), sta_pw.c_str());
+    panel::begin();
     controls::begin();
     Serial.printf("WLAN  \"%s\" / %s  ->  http://%s.local/  oder  http://%s/\n", web::kSsid,
                   web::kPassword, web::kHostname, WiFi.softAPIP().toString().c_str());
+    Serial.printf("PSRAM %u KB, Flash %u KB\n", static_cast<unsigned>(ESP.getPsramSize() / 1024),
+                  static_cast<unsigned>(ESP.getFlashChipSize() / 1024));
     Serial.printf("PRESET %02d %s\n", g_slot + 1, g_edit.name);
 }
 
@@ -615,7 +770,12 @@ void loop() {
 
     static uint32_t next_status_ms = 1000;
     static uint32_t next_console_ms = 5000;
+    static uint32_t next_display_ms = 0;
     const uint32_t now = millis();
+    if (static_cast<int32_t>(now - next_display_ms) >= 0) {
+        next_display_ms = now + 20;
+        update_display();
+    }
     if (static_cast<int32_t>(now - next_status_ms) >= 0) {
         next_status_ms = now + 1000;
         if (web::clients() > 0) web::broadcast("stat " + status_line());

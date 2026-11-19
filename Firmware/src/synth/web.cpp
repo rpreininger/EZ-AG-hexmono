@@ -139,13 +139,24 @@ void on_restore(AsyncWebServerRequest* request) {
 
 void write_schema(Print& out) { synth::write_schema(out); }
 
-void begin(CommandHandler handler, RestoreHandler restore) {
+void begin(CommandHandler handler, RestoreHandler restore, const char* sta_ssid,
+           const char* sta_password) {
     g_handler = handler;
     g_restore = restore;
     g_inbox = xQueueCreate(32, sizeof(Line));
 
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(kSsid, kPassword);
+    const bool sta = sta_ssid != nullptr && sta_ssid[0] != '\0';
+    WiFi.setHostname(kHostname);
+    WiFi.mode(sta ? WIFI_AP_STA : WIFI_AP);
+    // Kanal 6 wie der Hotspot des Tab5: verbindet sich das Gerät dort, muss der eigene
+    // Zugangspunkt nicht den Kanal wechseln (das würfe angemeldete Browser hinaus).
+    WiFi.softAP(kSsid, kPassword, kChannel);
+    if (sta) {
+        WiFi.setSleep(false);  // Stromsparen verzögert die UDP-Pakete der Tafel
+        WiFi.setAutoReconnect(true);
+        WiFi.begin(sta_ssid, sta_password);
+        Serial.printf("WLAN  melde mich an bei \"%s\"\n", sta_ssid);
+    }
     if (MDNS.begin(kHostname)) MDNS.addService("http", "tcp", 80);
 
     g_ws.onEvent(on_ws_event);
@@ -199,6 +210,14 @@ void broadcast(const String& text) {
 }
 
 size_t clients() { return g_ws.count(); }
+
+void network_text(char* out, size_t size) {
+    if ((WiFi.getMode() & WIFI_STA) && WiFi.status() == WL_CONNECTED) {
+        snprintf(out, size, "%s", WiFi.localIP().toString().c_str());
+    } else {
+        snprintf(out, size, "WLAN %s", kSsid);
+    }
+}
 
 }  // namespace web
 }  // namespace synth

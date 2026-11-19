@@ -16,11 +16,13 @@
 
 #include <stdint.h>
 
+#include "board.h"
+
 namespace synth {
 namespace controls {
 
-constexpr int kSdaPin = 8;
-constexpr int kSclPin = 9;
+constexpr int kSdaPin = board::kSdaPin;
+constexpr int kSclPin = board::kSclPin;
 constexpr int kKnobs = 4;
 
 struct Event {

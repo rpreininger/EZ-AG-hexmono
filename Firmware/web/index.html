@@ -331,7 +331,8 @@ function showStat(s) {
   const peak = Math.round(s.peak / 327.67);
   const rtt = rtts.length ? [...rtts].sort((a, b) => a - b)[rtts.length >> 1] : null;
   const info = $('info');
-  info.textContent = `CPU ${num(s.load, 0)} % · Pegel ${peak} % · USB ${s.usb ? '✓' : '–'}` +
+  const port = s.port === 'din' ? 'DIN-MIDI' : `USB ${s.usb ? '✓' : '–'}`;
+  info.textContent = `CPU ${num(s.load, 0)} % · Pegel ${peak} % · ${port}` +
     (rtt != null ? ` · ${Math.round(rtt)} ms` : '');
   info.classList.toggle('hot', peak >= 99);
   info.title = peak >= 99 ? 'Übersteuert: Lautstärke oder Resonanz zurücknehmen' : '';

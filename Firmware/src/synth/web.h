@@ -16,6 +16,7 @@ namespace web {
 constexpr char kSsid[] = "SID-Synth";
 constexpr char kPassword[] = "sid12345";
 constexpr char kHostname[] = "sid";  // http://sid.local
+constexpr int kChannel = 6;
 
 /// Wird aus loop() mit jeder Befehlszeile aufgerufen. Darf die Zeile zerlegen.
 using CommandHandler = void (*)(char* line);
@@ -23,7 +24,14 @@ using CommandHandler = void (*)(char* line);
 /// Wird aus loop() mit einer Sicherungsdatei aufgerufen, die über POST /api/restore kam.
 using RestoreHandler = void (*)(const char* text, size_t length);
 
-void begin(CommandHandler handler, RestoreHandler restore);
+/// Startet das eigene WLAN „SID-Synth“. Ist `sta_ssid` nicht leer, meldet sich das Gerät
+/// zusätzlich bei diesem Netz an (auf der Bühne: dem Hotspot des Tab5, für das Bild der
+/// vierten Tafel) und versucht es weiter, solange es nicht erreichbar ist.
+void begin(CommandHandler handler, RestoreHandler restore, const char* sta_ssid = "",
+           const char* sta_password = "");
+
+/// Für die Anzeige: die Adresse im fremden Netz, sonst der Name des eigenen WLAN.
+void network_text(char* out, size_t size);
 
 /// In loop(): eingegangene Befehle abarbeiten, getrennte Browser aufräumen.
 void poll();
