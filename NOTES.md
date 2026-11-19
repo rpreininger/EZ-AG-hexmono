@@ -21,6 +21,16 @@ Sitzung 19.11. in Kürze:
   auf der SD-Karte liegt **keine** config.json. NVS des Bass-Synth gesichert:
   `backup\tab5-e8f60ae2e8b7-bass-synth-nvs-2026-11-19.bin` (Patches, Loops, bleiben auch
   im Gerät stehen).
+- **Dauertest 1 h** (Tab5 `stress 30 120`: alle 30 s ein zufälliger Clip, jede 5. Runde
+  ein Stopp — 96 Clips, 24 Stopps; dabei wurde an den Encodern gedreht): **keine
+  Fehler, kein Neustart** auf beiden Geräten. Guition: in 541 Fünf-Sekunden-Fenstern
+  mit laufendem Clip je 709–777 Pakete (142–155/s, Mittel 149,8 — nichts verloren),
+  461 581 Pakete gesamt, keins verworfen; Audio-Lücke höchstens 3,0 ms (Puffer 11,6 ms),
+  Last im Mittel 18,9 %, Spitze 37,2 %; Heap 140–141 KB, also kein Leck. Tab5: 25 fps,
+  Senden höchstens 12,4 ms je Bild, DMA-Speicher die ganze Stunde unverändert (76 KB).
+  Die Tafeln A–C waren nicht da (der Tab5 überspringt sie).
+  Achtung beim Auswerten: 8-mal kam eine Statuszeile 5 s verspätet am PC an (USB), das
+  Gerät selbst lief durch — Paketraten deshalb nach dem Zähler des Geräts rechnen.
 - Noch nicht gesehen/gesagt: ob die Farbprobe beim Start stimmt und ob ein Dreh am
   Encoder auf die SID-Seite umschaltet.
 
@@ -147,7 +157,9 @@ G4. **Ohne Tab5 mit gespeichertem Bühnen-WLAN:** stört das ständige Suchen na
     `strato_accesspoint` das eigene WLAN „SID-Synth“ (Editor am iPhone)? Wenn ja: seltener
     suchen oder nur auf Kanal 6.
 G5. Bühnen-Durchlauf: alle drei Tafeln + Tafel D, Fantom-Pads, eine Stunde; dabei
-    `stat` auf beiden Geräten (Lücken `gap`, verlorene Kacheln auf dem Tab5).
+    `stat` auf beiden Geräten (Lücken `gap`, verlorene Kacheln auf dem Tab5). Der
+    Dauertest vom 19.11. lief ohne die Tafeln A–C — mit ihnen teilt sich Tafel D den
+    Funkkanal mit ~20 Mbit/s.
 G6. Tafel D auch in die config.json der Mac-App (statt des iPixel-Eintrags), falls die
     Mac-App ohne Tab5 spielen soll — dann muss das Gerät in deren Netz.
 G7. Commits: `sid-guition` hier, `tab5-playout` (main.c, config.c) in midi-ft-bridge.
