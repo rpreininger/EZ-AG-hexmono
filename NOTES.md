@@ -66,7 +66,8 @@ nicht gebraucht.
 | P5 | GND 3.3V IO17 IO18 | STEMMA QT: **Encoder-Board** (SDA 17, SCL 18), steckt |
 
 Intern: Display CS 45, SCK 47, D0–D3 21/48/40/39, Hintergrundlicht 1. Alles in
-`Firmware/src/synth/board.h`.
+`Firmware/src/synth/board.h`. **Anschlussplan für DAC, MIDI und Encoder:**
+[docs/guition-verdrahtung.md](docs/guition-verdrahtung.md) (mit Foto der Platine).
 
 **Display** (`display.cpp`): im Normalbetrieb die vierte Tafel — das 32×16-Bild vom
 Tab5, jeder Punkt als Block von 15×15 Pixeln (480×240, oben und unten 16 Pixel
