@@ -1,6 +1,6 @@
 # SID-Synth — Projektnotizen
 
-**Stand: 19.11.2026** — Branch `sid-guition` (lokal, noch nicht committet). **Neues
+**Stand: 19.11.2026** — Branch `sid-guition` (gepusht 19.11., nicht gemergt). **Neues
 Gerät:** der Synth zieht auf ein **Guition JC4827W543** (4,3″-Display) um, weil das
 Display der alten Box zu klein war — und dasselbe Gerät ersetzt auf der Bühne das
 **iPixel-Bluetooth-Panel** als vierte Flaschen-Taschen-Tafel. Der Tab5 bleibt allein
@@ -31,8 +31,34 @@ Sitzung 19.11. in Kürze:
   Die Tafeln A–C waren nicht da (der Tab5 überspringt sie).
   Achtung beim Auswerten: 8-mal kam eine Statuszeile 5 s verspätet am PC an (USB), das
   Gerät selbst lief durch — Paketraten deshalb nach dem Zähler des Geräts rechnen.
-- Noch nicht gesehen/gesagt: ob die Farbprobe beim Start stimmt und ob ein Dreh am
-  Encoder auf die SID-Seite umschaltet.
+- Am Gerät bestätigt: die Farbprobe beim Start stimmt, ein Dreh am
+  Encoder schaltet auf die SID-Seite.
+- **Montage:** das Gerät zeigt zum Publikum, Andre schaut von der anderen Seite drauf →
+  SID-Seite um 180° gedreht, Tafel richtig herum. Einstellbar an der Konsole (`flip`) und
+  im Editor unter Einstellungen → „Display-Montage“ (nur bei Geräten mit Display; über
+  WLAN am iPhone noch nicht ausprobiert).
+- `stat` zeigt jetzt auch die Anzeige: `disp` = Anteil der letzten Sekunde, den das
+  Zeichnen auf Kern 0 gebraucht hat, `dfps` = Bilder in der Sekunde, `dmax` = längstes
+  einzelnes Bild seit dem Start.
+- **Last gemessen** (Clips vom Tab5, eine Note gehalten): Klangerzeugung Kern 1 im Mittel
+  20 %, schlechtester Block 37 %, Audio-Lücke höchstens 3,4 ms (Puffer 11,6 ms) — reichlich
+  Reserve, reSID rechnet unabhängig von der Notenzahl immer gleich viel. Kern 0: das
+  Zeichnen der Tafel braucht bei Clips mit viel Bewegung bis 69 % (bis 42 Teilbilder/s;
+  die Bibliothek wartet aktiv auf den QSPI-Bus); die Anzeige-Aufgabe hat die niedrigste
+  Priorität und nimmt nur, was übrig ist — WLAN, Pakete und Encoder kommen vorher dran,
+  nichts verloren, nichts verworfen. SID-Seite allein 2–3 %. Ein voller Seitenwechsel
+  dauert bis 99 ms (einmalig). Heap 141 KB, stabil.
+- **Presets hochladen am Guition geprüft** (über USB, `tools/synth_presets.py COM15`):
+  Sicherung und unverändert zurück → „0 geladen, 8 unverändert“; ein Preset auf Platz 16
+  geschrieben (42 ms), gelöscht, alles wie vorher. Sicherung der 8 Presets:
+  `D:\Developer\Arduino\SID\backup\guition-presets-2026-11-19.json`. Der Weg über WLAN
+  (Editor am iPhone) ist weiterhin ungeprüft, siehe „Was fehlt“ Punkt 0.
+- Tab5 (midi-ft-bridge `tab5-playout`): Songliste rechts im freien Bereich unter Tafel D
+  und Touch-Auswahl mit großen Knöpfen, siehe dort `tab5/README.md`.
+- **Nachttest 19./20.11. bestanden** (7 h 21 min, alle 30 s ein Clip/Stop vom Tab5 per
+  Konsole oder Touch, jede 3. Runde `press 1` = gedrehte SID-Seite): Guition 0 Neustarts,
+  0 verworfene Pakete, Audio-Lücke max 3,8 ms, Last max 40 %, Heap 141 KB konstant,
+  Anzeige max 75 % / längstes Bild 106 ms, im Mittel 147 Tafel-Pakete/s.
 
 Sitzung 13.10. in Kürze:
 - Anschluss des Encoder-Boards geklärt, Foto der Rückseite:
@@ -85,6 +111,11 @@ schwarz), die Auflösung des iPixel bleibt. Ein Dreh oder Druck am Encoder zeigt
 **SID-Seite** (Platz, Name, die drei Live-Regler mit Balken, MIDI, Pegel, Netz) und
 bleibt 4 s nach dem letzten Dreh. Kommt 2 s kein Bild vom Tab5, bleibt die SID-Seite
 stehen. Beim Start 3 s Farbprobe (ROT/GRÜN/BLAU/WEISS).
+**Drehung:** das Gerät zeigt zum Publikum, Andre schaut von der anderen Seite drauf —
+deshalb steht die SID-Seite um 180° gedreht (für ihn lesbar), Tafel und Farbprobe richtig
+herum fürs Publikum. Gedreht wird im Controller (MADCTL), beim Seitenwechsel wird ohnehin
+alles neu gezeichnet. Umstellen ohne Flashen: `flip sid|tafel|beide|aus` (gespeichert,
+Standard `sid`).
 
 **Tafel** (`panel.cpp`): UDP 1337, PPM P6 mit „#FT: x y“ (wie der Tab5 sendet) oder
 Versatz im Nachspann. Auf dem Tab5 (`midi-ft-bridge`, Branch `tab5-playout`,
@@ -102,7 +133,8 @@ Der Weg über den C2MIDI ist für dieses Gerät gestrichen.
 
 Neue Konsolenbefehle: `screen auto|sid|tafel|farben`, `paneltest <s>` (Testbild wie vom
 Tab5), `tafel` (empfangenes Bild als Helligkeitsstufen), `wifi [<ssid> <pw> | -]`,
-`reboot`. Die Konsole schreibt das WLAN-Passwort nicht zurück.
+`reboot`, `flip sid|tafel|beide|aus` (welches Bild auf dem Kopf steht). Die Konsole
+schreibt das WLAN-Passwort nicht zurück.
 
 ## Ziel
 
@@ -145,9 +177,11 @@ Klang im Browser bearbeiten, Presets speichern, drei Live-Regler und ein Preset-
 
 **Guition-Gerät (gilt ab 19.11. vor der alten Liste darunter):**
 
-G1. **Ansehen und sagen:** stimmt die Farbprobe beim Start (ROT/GRÜN/BLAU/WEISS)? Schaltet
-    ein Dreh am Encoder auf die SID-Seite und nach 4 s zurück zur Tafel? Ist die SID-Seite
-    lesbar (Umlaute, Werte, Balken)? Drehrichtung der Encoder.
+G1. ~~Farbprobe beim Start~~ und ~~Encoder → SID-Seite~~: bestätigt 19.11. Noch sagen:
+    springt es nach 4 s zurück zur Tafel? Ist die SID-Seite lesbar (Umlaute, Werte,
+    Balken)? Drehrichtung der Encoder. **Neu (19.11.):** SID-Seite für Andre auf dem
+    Kopf, Tafel richtig herum — am Gerät in Spielhaltung ansehen; die Drehrichtung der
+    Encoder danach aus Andres Sicht prüfen (rechts herum = Balken wächst).
 G2. **DAC an P3:** BCK → IO6, LRCK → IO7, DIN → IO15, VIN/GND von P1 (+5V/GND).
     Lötbrücken wie bisher (FLT = L, DEMP = L, XSMT = H, FMT = L). Gebraucht: zwei
     4-polige Kabel mit Stecker passend zu P1/P3 auf Dupont-Buchse.

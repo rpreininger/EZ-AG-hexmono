@@ -8,6 +8,10 @@
 // bleibt vier Sekunden nach dem letzten Dreh. Kommt seit zwei Sekunden kein Bild vom
 // Tab5 (Probe, kein Konzert), bleibt sie ganz stehen.
 //
+// Das Gerät zeigt zum Publikum; der Gitarrist schaut von der anderen Seite drauf. Für
+// ihn wird die SID-Seite um 180° gedreht, die Tafel bleibt richtig herum fürs Publikum
+// (einstellbar mit set_flip, an der Konsole `flip`).
+//
 // Gezeichnet wird in einer eigenen Aufgabe auf Kern 0; loop() reicht nur den Stand
 // herüber (set_view). Auf Geräten ohne Display sind alle Aufrufe leer.
 
@@ -46,6 +50,23 @@ enum class Mode : uint8_t { Auto, Sid, Panel, Colors };
 void set_mode(Mode mode);
 Mode mode();
 bool present();
+
+/// Welche Bilder um 180° gedreht erscheinen (Bits). Vor begin() setzen, damit schon die
+/// Farbprobe richtig herum steht; später gesetzt, zeichnet die Anzeige alles neu.
+constexpr uint8_t kFlipSid = 1;    // SID-Seite (für den Gitarristen)
+constexpr uint8_t kFlipPanel = 2;  // Tafel und Farbprobe (fürs Publikum)
+void set_flip(uint8_t flags);
+uint8_t flip();
+
+/// Was das Zeichnen kostet (Kern 0, für `stat`): Anteil der letzten vollen Sekunde, den
+/// die Anzeige-Aufgabe gezeichnet hat, Bilder in dieser Sekunde, das langsamste Bild seit
+/// dem Start (ein voller Seitenwechsel ist das teuerste).
+struct Stats {
+    float busy;
+    uint16_t frames;
+    float worst_ms;
+};
+Stats stats();
 
 }  // namespace display
 }  // namespace synth

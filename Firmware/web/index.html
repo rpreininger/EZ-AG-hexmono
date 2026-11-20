@@ -10,7 +10,7 @@
     an das Gerät   set <key> <wert> · name <text> · load|save <platz> · next · prev ·
                    init · revert · erase <platz> · on <note> <vel> · off <note> · panic ·
                    thru 0|1 · ezag 0|1 · start <platz> · knob <1..3> <key> · ping <t> ·
-                   audio 0|1
+                   audio 0|1 · flip sid|tafel|beide|aus
     vom Gerät      state <json> · set <key> <wert> <geändert 0|1> · stat <json> ·
                    pong <t> · msg <text>
                    und, solange „Ton im Browser" an ist, binäre PCM-Blöcke
@@ -237,6 +237,11 @@ function settings(main) {
   d.insertAdjacentHTML('beforeend', `
     <div class="row t"><input type="checkbox" id="thru"><label for="thru">Noten auch an MIDI OUT (SidStation)</label></div>
     <div class="row t"><input type="checkbox" id="ezag"><label for="ezag">EZ-AG-Filter (Saitenkanäle zusammenführen, Bundgriffe ausblenden) – für die DG-20 aus</label></div>
+    <div class="row" id="flipRow" hidden><label for="flip">Display-Montage</label><select id="flip">
+      <option value="sid">Zum Publikum, SID-Seite gedreht</option>
+      <option value="tafel">Zum Gitarristen, Tafel gedreht</option>
+      <option value="beide">Kopfüber, beides gedreht</option>
+      <option value="aus">Nichts gedreht</option></select></div>
     <div class="row"><label for="start">Beim Einschalten laden</label><select id="start"></select></div>
     <div class="row"><label for="knob1">Drehregler 1</label><select id="knob1"></select></div>
     <div class="row"><label for="knob2">Drehregler 2</label><select id="knob2"></select></div>
@@ -249,6 +254,7 @@ function settings(main) {
     <input type="file" id="file" accept=".json,application/json" hidden>`);
   $('thru').onchange = e => cmd('thru ' + (e.target.checked ? 1 : 0));
   $('ezag').onchange = e => cmd('ezag ' + (e.target.checked ? 1 : 0));
+  $('flip').onchange = e => cmd('flip ' + e.target.value);
   for (const n of [1, 2, 3]) {
     const sel = $('knob' + n);
     schema.params.forEach(p => sel.add(new Option(p.group + ' · ' + p.label, p.key)));
@@ -315,6 +321,9 @@ function applyState(s) {
   if (document.activeElement !== $('name')) $('name').value = s.name;
   $('thru').checked = !!s.thru;
   $('ezag').checked = !!s.ezag;
+  // Nur Geräte mit Display (Guition) kennen flip; -1 oder fehlend → Zeile ausblenden.
+  $('flipRow').hidden = !(s.flip >= 0);
+  if (s.flip >= 0) $('flip').value = ['aus', 'sid', 'tafel', 'beide'][s.flip & 3];
   $('erase').disabled = !s.own[s.slot];
   s.knobs.forEach((key, k) => { $('knob' + (k + 1)).value = key; });
   $('enc').textContent = s.enc

@@ -107,6 +107,8 @@ String state_message() {
     s += g_thru ? 1 : 0;
     s += ",\"ezag\":";
     s += g_ezag ? 1 : 0;
+    s += ",\"flip\":";  // Bits wie display::kFlip…, -1 = kein Display (Editor blendet aus)
+    s += display::present() ? static_cast<int>(display::flip()) : -1;
     s += ",\"dirty\":";
     s += g_dirty ? "true" : "false";
     s += ",\"name\":";
@@ -164,9 +166,12 @@ String status_line() {
 #if SYNTH_HAS_DISPLAY
     const panel::Stats tafel = panel::stats();
     const uint32_t last = panel::last_frame_ms();
-    n += snprintf(text + n, sizeof(text) - n, ",\"tafel\":%u,\"tafel_alt\":%ld",
+    const display::Stats disp = display::stats();
+    n += snprintf(text + n, sizeof(text) - n,
+                  ",\"tafel\":%u,\"tafel_alt\":%ld,\"disp\":%.1f,\"dfps\":%u,\"dmax\":%.1f",
                   static_cast<unsigned>(tafel.packets),
-                  last == 0 ? -1L : static_cast<long>((millis() - last) / 1000));
+                  last == 0 ? -1L : static_cast<long>((millis() - last) / 1000), disp.busy,
+                  static_cast<unsigned>(disp.frames), disp.worst_ms);
 #endif
     snprintf(text + n, sizeof(text) - n, "}");
     return String(text);
@@ -187,6 +192,10 @@ bool while_muted(Work work) {
 }
 
 // MARK: - Befehle
+
+/// `flip`: Index = Bits aus display::kFlipSid | kFlipPanel.
+const char* const kFlipNames[4] = {"aus", "sid", "tafel", "beide"};
+static_assert(display::kFlipSid == 1 && display::kFlipPanel == 2, "kFlipNames");
 
 bool same_patch(const Patch& a, const Patch& b) {
     return memcmp(a.values, b.values, sizeof(a.values)) == 0 && strcmp(a.name, b.name) == 0;
@@ -532,6 +541,22 @@ void handle(char* line) {
         else if (strcmp(args, "farben") == 0) mode = display::Mode::Colors;
         display::set_mode(mode);
         Serial.printf("SCREEN %s\n", *args != '\0' ? args : "auto");
+    } else if (strcmp(command, "flip") == 0) {
+        // flip sid|tafel|beide|aus: welches Bild um 180° gedreht steht (wird gespeichert);
+        // ohne Angabe nur anzeigen
+        if (*args != '\0') {
+            int flags = -1;
+            for (int i = 0; i < 4; ++i)
+                if (strcmp(args, kFlipNames[i]) == 0) flags = i;
+            if (flags < 0) {
+                Serial.println("flip sid|tafel|beide|aus");
+                return;
+            }
+            display::set_flip(static_cast<uint8_t>(flags));
+            while_muted([flags] { return g_settings.putUChar("flip", static_cast<uint8_t>(flags)) > 0; });
+            broadcast_state();
+        }
+        Serial.printf("FLIP  auf dem Kopf: %s\n", kFlipNames[display::flip() & 3]);
     } else if (strcmp(command, "paneltest") == 0) {
         // paneltest <s>: Testbild wie vom Tab5, 0 hält es an
         const int seconds = *args != '\0' ? atoi(args) : 30;
@@ -749,7 +774,9 @@ void setup() {
     const midifilter::Result panic = g_filter.panic();
     for (uint8_t i = 0; i < panic.count && g_thru; ++i) g_port.write(panic.events[i]);
 
+    display::set_flip(g_settings.getUChar("flip", display::kFlipSid));
     display::begin();
+    if (display::present()) Serial.printf("FLIP  auf dem Kopf: %s\n", kFlipNames[display::flip() & 3]);
     const String sta_ssid = setting_string("sta_ssid");
     const String sta_pw = setting_string("sta_pw");
     web::begin(&on_web_command, &restore_presets, sta_ssid.c_str(), sta_pw.c_str());

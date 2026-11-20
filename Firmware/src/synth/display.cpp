@@ -55,6 +55,10 @@ View g_view;              // unter g_mux
 uint32_t g_view_version;  // unter g_mux
 std::atomic<uint32_t> g_sid_until_ms{0};
 std::atomic<Mode> g_mode{Mode::Auto};
+std::atomic<uint8_t> g_flip{kFlipSid};
+std::atomic<uint32_t> g_busy_permille{0};
+std::atomic<uint32_t> g_frames{0};
+std::atomic<uint32_t> g_worst_us{0};
 
 // MARK: - Text
 
@@ -275,14 +279,15 @@ void draw_sid(bool full) {
 
 // MARK: - Tafel
 
-void draw_panel(bool full) {
+/// false, wenn es kein neues Bild gab.
+bool draw_panel(bool full) {
     static uint8_t shown[panel::kWidth * panel::kHeight * 3];
     static uint8_t now[panel::kWidth * panel::kHeight * 3];
     static uint16_t band[panel::kWidth * kScale * kScale];
     static uint32_t version = 0;
 
     const uint32_t v = panel::snapshot(now);
-    if (!full && v == version) return;
+    if (!full && v == version) return false;
     version = v;
     if (full) g_gfx->fillScreen(kBlack);
 
@@ -300,6 +305,7 @@ void draw_panel(bool full) {
         g_gfx->draw16bitRGBBitmap(kPanelX, kPanelY + y * kScale, band, panel::kWidth * kScale, kScale);
     }
     memcpy(shown, now, sizeof(shown));
+    return true;
 }
 
 // MARK: - Farbprobe
@@ -320,8 +326,22 @@ void draw_colors() {
 
 // MARK: - Aufgabe
 
+/// Dreht das Display passend zum Bild, das gleich kommt (Speicherzugriff des Controllers,
+/// kostet nichts beim Zeichnen). true, wenn sich die Drehung geändert hat — dann muss
+/// alles neu gezeichnet werden.
+bool orient(Mode mode) {
+    static uint8_t applied = 0;  // begin() startet mit Drehung 0
+    const uint8_t bit = mode == Mode::Sid ? kFlipSid : kFlipPanel;
+    const uint8_t rotation = (g_flip.load() & bit) != 0 ? 2 : 0;
+    if (rotation == applied) return false;
+    g_gfx->setRotation(rotation);
+    applied = rotation;
+    return true;
+}
+
 void task(void*) {
     Mode shown = Mode::Colors;
+    orient(Mode::Colors);
     draw_colors();
     const uint32_t colors_until = millis() + kColorsAtBootMs;
     while (static_cast<int32_t>(millis() - colors_until) < 0 && g_mode.load() == Mode::Auto) {
@@ -330,6 +350,9 @@ void task(void*) {
     shown = Mode::Auto;  // erzwingt das erste volle Bild
 
     uint32_t view_version = 0;
+    uint32_t window_ms = millis();
+    uint32_t busy_us = 0;
+    uint32_t frames = 0;
     for (;;) {
         const uint32_t now = millis();
         Mode want = g_mode.load();
@@ -339,23 +362,41 @@ void task(void*) {
             const bool held = static_cast<int32_t>(g_sid_until_ms.load() - now) > 0;
             want = (!stream || held) ? Mode::Sid : Mode::Panel;
         }
-        const bool full = want != shown;
+        const bool turned = orient(want);
+        const bool full = turned || want != shown;
         shown = want;
+        const uint32_t start_us = micros();
+        bool drew = false;
         switch (want) {
             case Mode::Panel:
-                draw_panel(full);
+                drew = draw_panel(full);
                 break;
             case Mode::Colors:
                 if (full) draw_colors();
+                drew = full;
                 break;
             default: {
                 portENTER_CRITICAL(&g_mux);
                 const uint32_t version = g_view_version;
                 portEXIT_CRITICAL(&g_mux);
-                if (full || version != view_version) draw_sid(full);
+                drew = full || version != view_version;
+                if (drew) draw_sid(full);
                 view_version = version;
                 break;
             }
+        }
+        if (drew) {
+            const uint32_t took = micros() - start_us;
+            busy_us += took;
+            ++frames;
+            if (took > g_worst_us.load()) g_worst_us.store(took);
+        }
+        if (now - window_ms >= 1000) {
+            g_busy_permille.store(busy_us / (now - window_ms));
+            g_frames.store(frames);
+            window_ms = now;
+            busy_us = 0;
+            frames = 0;
         }
         vTaskDelay(pdMS_TO_TICKS(want == Mode::Panel ? 5 : 15));
     }
@@ -396,6 +437,14 @@ void set_mode(Mode mode) { g_mode.store(mode); }
 Mode mode() { return g_mode.load(); }
 bool present() { return g_present; }
 
+void set_flip(uint8_t flags) { g_flip.store(flags & (kFlipSid | kFlipPanel)); }
+uint8_t flip() { return g_flip.load(); }
+
+Stats stats() {
+    return {g_busy_permille.load() / 10.0f, static_cast<uint16_t>(g_frames.load()),
+            g_worst_us.load() / 1000.0f};
+}
+
 }  // namespace display
 }  // namespace synth
 
@@ -409,6 +458,9 @@ void wake() {}
 void set_mode(Mode) {}
 Mode mode() { return Mode::Auto; }
 bool present() { return false; }
+void set_flip(uint8_t) {}
+uint8_t flip() { return 0; }
+Stats stats() { return {0, 0, 0}; }
 }  // namespace display
 }  // namespace synth
 
